@@ -19,34 +19,28 @@ echo "🧠 Installing Telemoji Enhancer..."
 echo "===================================="
 sleep 1
 
-# --- 1️⃣ Detect Python version ---
-PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" || echo "3")
-PY_VENV_PKG="python${PY_VER}-venv"
-
-# --- 2️⃣ Check and install dependencies ---
+# --- 1️⃣ System dependencies ---
 echo "🔍 Checking system requirements..."
 
-# Python
 if ! command -v python3 >/dev/null 2>&1; then
     echo "📦 Installing Python3..."
     sudo apt update && sudo apt install -y python3 python3-pip
 fi
 
-# Ensure correct venv package
-echo "🔧 Ensuring Python venv module is available..."
-if ! python3 -m venv --help >/dev/null 2>&1; then
-    echo "📦 Installing $PY_VENV_PKG ..."
+# --- 2️⃣ Ensure Python venv + ensurepip available ---
+echo "🔧 Ensuring Python virtual-env support..."
+if ! python3 -c "import ensurepip" >/dev/null 2>&1; then
+    echo "📦 Installing python3-full (includes venv + ensurepip)..."
     sudo apt update
-    sudo apt install -y "$PY_VENV_PKG" || sudo apt install -y python3-venv
+    sudo apt install -y python3-full || sudo apt install -y python3-venv
 fi
 
-# Git
 if ! command -v git >/dev/null 2>&1; then
     echo "📦 Installing Git..."
     sudo apt install -y git
 fi
 
-# --- 3️⃣ Clone or update repository ---
+# --- 3️⃣ Clone / update repo ---
 if [ ! -d "$INSTALL_DIR" ]; then
     echo "⬇️ Cloning Telemoji Enhancer into $INSTALL_DIR"
     git clone "$REPO_URL" "$INSTALL_DIR"
@@ -58,25 +52,20 @@ fi
 
 cd "$INSTALL_DIR"
 
-# --- 4️⃣ Create or repair virtual environment ---
-if [ -d "$VENV_DIR" ]; then
-    if [ -f "$VENV_DIR/bin/activate" ]; then
-        echo "✅ Valid virtual environment found."
-    else
-        echo "⚠️ Broken virtual environment detected — recreating..."
-        rm -rf "$VENV_DIR"
-        python3 -m venv "$VENV_DIR"
-    fi
+# --- 4️⃣ Create or repair venv ---
+if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
+    echo "✅ Valid virtual environment found."
 else
     echo "⚙️ Creating new virtual environment..."
+    rm -rf "$VENV_DIR"
     python3 -m venv "$VENV_DIR" || {
-        echo "❌ venv creation failed. Installing $PY_VENV_PKG again..."
-        sudo apt install -y "$PY_VENV_PKG" || sudo apt install -y python3-venv
+        echo "❌ venv creation failed — installing python3-full..."
+        sudo apt install -y python3-full
         python3 -m venv "$VENV_DIR"
     }
 fi
 
-# --- 5️⃣ Install Python dependencies ---
+# --- 5️⃣ Install dependencies ---
 echo "📦 Installing Python dependencies..."
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
@@ -88,12 +77,12 @@ else
 fi
 deactivate
 
-# --- 6️⃣ Ensure launcher is executable ---
+# --- 6️⃣ Ensure launcher executable ---
 if [ -f "$INSTALL_DIR/telemoji.sh" ]; then
     chmod +x "$INSTALL_DIR/telemoji.sh"
 fi
 
-# --- 7️⃣ Create launcher alias ---
+# --- 7️⃣ Create alias ---
 create_alias() {
     local shell_rc="$1"
     if ! grep -q "telemoji" "$shell_rc" 2>/dev/null; then
@@ -106,14 +95,10 @@ create_alias() {
     fi
 }
 
-if [ -n "$SHELL" ]; then
-    if [[ "$SHELL" == *"bash"* ]]; then
-        create_alias "$BASHRC_FILE"
-    elif [[ "$SHELL" == *"zsh"* ]]; then
-        create_alias "$ZSHRC_FILE"
-    else
-        create_alias "$BASHRC_FILE"
-    fi
+if [[ "$SHELL" == *"bash"* ]]; then
+    create_alias "$BASHRC_FILE"
+elif [[ "$SHELL" == *"zsh"* ]]; then
+    create_alias "$ZSHRC_FILE"
 else
     create_alias "$BASHRC_FILE"
 fi
