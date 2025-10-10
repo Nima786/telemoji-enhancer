@@ -84,10 +84,12 @@ if [ -f "$INSTALL_DIR/telemoji.sh" ]; then
     chmod +x "$INSTALL_DIR/telemoji.sh"
 fi
 
-# --- 7️⃣ Create and activate launcher alias immediately ---
+# --- 7️⃣ Create and activate launcher alias ---
 create_alias() {
     local shell_rc="$1"
-    if ! grep -q "telemoji" "$shell_rc" 2>/dev/null; then
+
+    # Write alias if not already in file
+    if ! grep -q "telemoji=" "$shell_rc" 2>/dev/null; then
         echo "📎 Adding alias to $shell_rc"
         {
             echo ""
@@ -96,10 +98,12 @@ create_alias() {
         } >> "$shell_rc"
     fi
 
-    # Make the alias available instantly in current session
+    # Immediately make alias available in this shell session
     alias telemoji="$INSTALL_DIR/telemoji.sh"
+    export -f telemoji 2>/dev/null || true
 }
 
+# Detect current shell and apply
 if [[ "$SHELL" == *"bash"* ]]; then
     create_alias "$BASHRC_FILE"
 elif [[ "$SHELL" == *"zsh"* ]]; then
