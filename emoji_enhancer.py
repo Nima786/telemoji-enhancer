@@ -15,6 +15,7 @@ from telethon import TelegramClient, events
 from telethon.tl.types import MessageEntityCustomEmoji
 from telethon.errors import MessageNotModifiedError
 
+
 CONFIG_FILE = "emoji_enhancer.ini"
 
 # Configure logging
@@ -23,6 +24,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 log = logging.getLogger(__name__)
+
 
 # ------------------------- #
 # Emoji Conversion Map
@@ -34,6 +36,7 @@ DEFAULT_EMOJI_MAP = {
     "👍": 5436022382600000003,
     "💪": 5436022382600000004,
 }
+
 
 # ------------------------- #
 # Config Manager
@@ -69,11 +72,11 @@ async def enhance_message(client, event, emoji_map):
         new_entities = event.message.entities or []
         new_text = original_text
 
+        # Replace all occurrences of each emoji
         for emoji, custom_id in emoji_map.items():
-            # Replace *all* occurrences of emoji
             new_text = re.sub(re.escape(emoji), emoji, new_text)
 
-        # If nothing changed, skip
+        # Skip if unchanged
         if new_text == original_text:
             return
 
@@ -88,7 +91,7 @@ async def enhance_message(client, event, emoji_map):
                 )
             )
 
-        # Merge original Markdown entities safely
+        # Merge Markdown entities
         if new_entities:
             updated_entities.extend(new_entities)
 
