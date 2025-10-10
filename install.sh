@@ -19,30 +19,27 @@ echo "🧠 Installing Telemoji Enhancer..."
 echo "===================================="
 sleep 1
 
-# --- 1️⃣ Check system dependencies ---
+# --- 1️⃣  Check dependencies ---
 echo "🔍 Checking system requirements..."
 
-# Python
 if ! command -v python3 >/dev/null 2>&1; then
     echo "📦 Installing Python3..."
     sudo apt update && sudo apt install -y python3 python3-pip
 fi
 
-# --- 2️⃣ Ensure venv + ensurepip available ---
-echo "🔧 Ensuring Python virtual environment support..."
+echo "🔧 Ensuring Python virtual-env support..."
 if ! python3 -c "import ensurepip" >/dev/null 2>&1; then
     echo "📦 Installing python3-full (includes venv + ensurepip)..."
     sudo apt update
     sudo apt install -y python3-full || sudo apt install -y python3-venv
 fi
 
-# Git
 if ! command -v git >/dev/null 2>&1; then
     echo "📦 Installing Git..."
     sudo apt install -y git
 fi
 
-# --- 3️⃣ Clone or update repository ---
+# --- 2️⃣  Clone or update repository ---
 if [ ! -d "$INSTALL_DIR" ]; then
     echo "⬇️ Cloning Telemoji Enhancer into $INSTALL_DIR"
     git clone "$REPO_URL" "$INSTALL_DIR"
@@ -54,7 +51,7 @@ fi
 
 cd "$INSTALL_DIR"
 
-# --- 4️⃣ Create or repair virtual environment ---
+# --- 3️⃣  Create/repair virtual environment ---
 if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
     echo "✅ Valid virtual environment found."
 else
@@ -67,7 +64,7 @@ else
     }
 fi
 
-# --- 5️⃣ Install Python dependencies ---
+# --- 4️⃣  Install Python dependencies ---
 echo "📦 Installing Python dependencies..."
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
@@ -79,16 +76,15 @@ else
 fi
 deactivate
 
-# --- 6️⃣ Ensure launcher is executable ---
+# --- 5️⃣  Ensure launcher is executable ---
 if [ -f "$INSTALL_DIR/telemoji.sh" ]; then
     chmod +x "$INSTALL_DIR/telemoji.sh"
 fi
 
-# --- 7️⃣ Create and activate launcher alias ---
+# --- 6️⃣  Create and activate launcher alias ---
 create_alias() {
     local shell_rc="$1"
 
-    # Write alias if not already in file
     if ! grep -q "telemoji=" "$shell_rc" 2>/dev/null; then
         echo "📎 Adding alias to $shell_rc"
         {
@@ -98,12 +94,10 @@ create_alias() {
         } >> "$shell_rc"
     fi
 
-    # Immediately make alias available in this shell session
+    # Activate alias now for this shell session too
     alias telemoji="$INSTALL_DIR/telemoji.sh"
-    export -f telemoji 2>/dev/null || true
 }
 
-# Detect current shell and apply
 if [[ "$SHELL" == *"bash"* ]]; then
     create_alias "$BASHRC_FILE"
 elif [[ "$SHELL" == *"zsh"* ]]; then
@@ -112,7 +106,11 @@ else
     create_alias "$BASHRC_FILE"
 fi
 
-# --- 8️⃣ Done ---
+# --- 7️⃣  Test alias activation in current shell ---
+echo "🔁 Verifying alias activation..."
+alias telemoji="$INSTALL_DIR/telemoji.sh"
+
+# --- 8️⃣  Done ---
 echo ""
 echo "✅ Installation completed successfully!"
 echo ""
