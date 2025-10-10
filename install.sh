@@ -3,7 +3,7 @@
 # Telemoji Enhancer Installer
 # https://github.com/Nima786/telemoji-enhancer
 #
-# Fully automatic setup with launcher auto-generation.
+# One-click setup for Python + Telethon environment and instant launch
 
 set -e  # stop on error
 
@@ -20,6 +20,7 @@ sleep 1
 
 # --- 1️⃣ Check dependencies ---
 echo "🔍 Checking system requirements..."
+
 if ! command -v python3 >/dev/null 2>&1; then
     echo "📦 Installing Python3..."
     sudo apt update && sudo apt install -y python3 python3-pip
@@ -94,7 +95,7 @@ fi
 cd "$INSTALL_DIR" || exit 1
 
 case "$1" in
-  start)
+  start|"")
     echo "🧠 Launching the Emoji Enhancer..."
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
@@ -141,13 +142,10 @@ else
     create_alias "$BASHRC_FILE"
 fi
 
-# --- 7️⃣ Done ---
+# --- 7️⃣ Auto-launch after installation ---
 echo ""
 echo "✅ Installation completed successfully!"
 echo ""
-echo "To start Telemoji Enhancer, run:"
+echo "🎉 Launching Telemoji Enhancer now..."
 echo ""
-echo "  telemoji start"
-echo ""
-echo "🎉 Enjoy your premium emoji automation!"
-echo ""
+bash "$INSTALL_DIR/telemoji.sh" start
