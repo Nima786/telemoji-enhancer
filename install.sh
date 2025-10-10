@@ -1,3 +1,4 @@
+
 #!/usr/bin/env bash
 #
 # Telemoji Enhancer Installer
@@ -5,12 +6,6 @@
 #
 # One-click setup for Python + Telethon environment
 # Works on Ubuntu/Debian/most Linux distributions
-
-# shellcheck disable=SC1091
-source "$VENV_DIR/bin/activate"
-
-# shellcheck disable=SC2129
-echo "" >> "$shell_rc"
 
 set -e  # stop on error
 
@@ -58,25 +53,31 @@ fi
 
 # --- 4️⃣ Activate venv and install dependencies ---
 echo "📦 Installing Python dependencies..."
+# shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
 pip install --upgrade pip
 if [ -f "requirements.txt" ]; then
     pip install -r requirements.txt
 else
-    # fallback basic dependencies
     pip install telethon
 fi
 deactivate
 
-# --- 5️⃣ Create launcher alias ---
+# --- 5️⃣ Ensure launcher is executable ---
+if [ -f "$INSTALL_DIR/telemoji.sh" ]; then
+    chmod +x "$INSTALL_DIR/telemoji.sh"
+fi
+
+# --- 6️⃣ Create launcher alias ---
 create_alias() {
     local shell_rc="$1"
     if ! grep -q "telemoji" "$shell_rc" 2>/dev/null; then
         echo "📎 Adding alias to $shell_rc"
-        echo "" >> "$shell_rc"
-        echo "# Telemoji Enhancer launcher" >> "$shell_rc"
-        echo "alias telemoji='source $VENV_DIR/bin/activate && python3 $INSTALL_DIR/emoji_enhancer.py'" >> "$shell_rc"
-        echo "deactivate" >> "$shell_rc"
+        {
+            echo ""
+            echo "# Telemoji Enhancer launcher"
+            echo "alias telemoji='$INSTALL_DIR/telemoji.sh'"
+        } >> "$shell_rc"
     fi
 }
 
@@ -92,17 +93,17 @@ else
     create_alias "$BASHRC_FILE"
 fi
 
-# --- 6️⃣ Done ---
+# --- 7️⃣ Done ---
 echo ""
 echo "✅ Installation completed successfully!"
 echo ""
 echo "To start Telemoji Enhancer, run:"
 echo ""
-echo "  telemoji"
+echo "  telemoji start"
 echo ""
 echo "or manually:"
 echo ""
-echo "  source $VENV_DIR/bin/activate && python3 $INSTALL_DIR/emoji_enhancer.py"
+echo "  bash $INSTALL_DIR/telemoji.sh start"
 echo ""
 echo "🎉 Enjoy your premium emoji automation!"
 echo ""
