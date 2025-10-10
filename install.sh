@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 #
 # Telemoji Enhancer Installer
@@ -15,34 +14,38 @@ VENV_DIR="$INSTALL_DIR/venv"
 BASHRC_FILE="$HOME/.bashrc"
 ZSHRC_FILE="$HOME/.zshrc"
 
-echo " "
+echo ""
 echo "🧠 Installing Telemoji Enhancer..."
 echo "===================================="
 sleep 1
 
-# --- 1️⃣ Check system dependencies ---
+# --- 1️⃣ Check and install dependencies ---
 echo "🔍 Checking system requirements..."
 
+# --- Python check ---
 if ! command -v python3 >/dev/null 2>&1; then
     echo "📦 Installing Python3..."
     sudo apt update && sudo apt install -y python3 python3-pip
 fi
 
-# Ensure venv module is available
+# --- Ensure Python venv module is available ---
+echo "🔧 Ensuring Python venv module is available..."
 if ! python3 -m venv --help >/dev/null 2>&1; then
     echo "📦 Installing Python venv module..."
+    sudo apt update
     sudo apt install -y python3-venv || \
     sudo apt install -y python3.12-venv || \
     sudo apt install -y python3.11-venv || \
     sudo apt install -y python3.10-venv
 fi
 
+# --- Git check ---
 if ! command -v git >/dev/null 2>&1; then
     echo "📦 Installing Git..."
     sudo apt install -y git
 fi
 
-# --- 2️⃣ Clone repository ---
+# --- 2️⃣ Clone or update repository ---
 if [ ! -d "$INSTALL_DIR" ]; then
     echo "⬇️ Cloning Telemoji Enhancer into $INSTALL_DIR"
     git clone "$REPO_URL" "$INSTALL_DIR"
@@ -54,39 +57,48 @@ fi
 
 cd "$INSTALL_DIR"
 
-# --- 3️⃣ Create virtual environment (auto-heal) ---
-if [ ! -d "$VENV_DIR" ]; then
-    echo "⚙️ Creating virtual environment..."
-    if ! python3 -m venv "$VENV_DIR"; then
-        echo "❌ Failed to create virtual environment. Trying to fix..."
-        sudo apt install -y python3-venv || \
-        sudo apt install -y python3.12-venv || \
-        sudo apt install -y python3.11-venv || \
-        sudo apt install -y python3.10-venv
+# --- 3️⃣ Verify, repair, or create virtual environment ---
+if [ -d "$VENV_DIR" ]; then
+    if [ -f "$VENV_DIR/bin/activate" ]; then
+        echo "✅ Valid virtual environment found."
+    else
+        echo "⚠️ Detected broken virtual environment — recreating..."
+        rm -rf "$VENV_DIR"
         python3 -m venv "$VENV_DIR"
     fi
 else
-    echo "✅ Virtual environment found."
+    echo "⚙️ Creating new virtual environment..."
+    python3 -m venv "$VENV_DIR"
 fi
 
-# --- 4️⃣ Activate venv and install dependencies ---
+# If creation failed, try fixing dependencies and retry
+if [ ! -f "$VENV_DIR/bin/activate" ]; then
+    echo "❌ Virtual environment creation failed. Attempting to fix..."
+    sudo apt install -y python3-venv || \
+    sudo apt install -y python3.12-venv || \
+    sudo apt install -y python3.11-venv || \
+    sudo apt install -y python3.10-venv
+    rm -rf "$VENV_DIR"
+    python3 -m venv "$VENV_DIR"
+fi
+
+# --- 4️⃣ Install Python dependencies ---
 echo "📦 Installing Python dependencies..."
 if [ -f "$VENV_DIR/bin/activate" ]; then
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
+    pip install --upgrade pip
+    if [ -f "requirements.txt" ]; then
+        pip install -r requirements.txt
+    else
+        pip install telethon
+    fi
+    deactivate
 else
-    echo "❌ Virtual environment missing, creating again..."
-    python3 -m venv "$VENV_DIR"
-    # shellcheck disable=SC1091
-    source "$VENV_DIR/bin/activate"
+    echo "❌ Could not find or create a valid Python virtual environment."
+    echo "Please ensure python3-venv is installed and rerun the installer."
+    exit 1
 fi
-pip install --upgrade pip
-if [ -f "requirements.txt" ]; then
-    pip install -r requirements.txt
-else
-    pip install telethon
-fi
-deactivate
 
 # --- 5️⃣ Ensure launcher is executable ---
 if [ -f "$INSTALL_DIR/telemoji.sh" ]; then
@@ -118,7 +130,7 @@ else
     create_alias "$BASHRC_FILE"
 fi
 
-# --- 7️⃣ Done ---
+# --- 7️⃣ Final message ---
 echo ""
 echo "✅ Installation completed successfully!"
 echo ""
