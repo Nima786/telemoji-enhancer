@@ -54,16 +54,32 @@ fi
 
 cd "$INSTALL_DIR"
 
-# --- 3️⃣ Create virtual environment ---
+# --- 3️⃣ Create virtual environment (auto-heal) ---
 if [ ! -d "$VENV_DIR" ]; then
     echo "⚙️ Creating virtual environment..."
-    python3 -m venv "$VENV_DIR"
+    if ! python3 -m venv "$VENV_DIR"; then
+        echo "❌ Failed to create virtual environment. Trying to fix..."
+        sudo apt install -y python3-venv || \
+        sudo apt install -y python3.12-venv || \
+        sudo apt install -y python3.11-venv || \
+        sudo apt install -y python3.10-venv
+        python3 -m venv "$VENV_DIR"
+    fi
+else
+    echo "✅ Virtual environment found."
 fi
 
 # --- 4️⃣ Activate venv and install dependencies ---
 echo "📦 Installing Python dependencies..."
-# shellcheck disable=SC1091
-source "$VENV_DIR/bin/activate"
+if [ -f "$VENV_DIR/bin/activate" ]; then
+    # shellcheck disable=SC1091
+    source "$VENV_DIR/bin/activate"
+else
+    echo "❌ Virtual environment missing, creating again..."
+    python3 -m venv "$VENV_DIR"
+    # shellcheck disable=SC1091
+    source "$VENV_DIR/bin/activate"
+fi
 pip install --upgrade pip
 if [ -f "requirements.txt" ]; then
     pip install -r requirements.txt
