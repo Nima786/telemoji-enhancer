@@ -4,7 +4,6 @@ Telemoji Enhancer - Main Entry Point
 Author: Nima Norouzi
 Repository: https://github.com/Nima786/telemoji-enhancer
 """
-
 import sys
 import platform
 import logging
