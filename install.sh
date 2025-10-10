@@ -19,7 +19,7 @@ echo "🧠 Installing Telemoji Enhancer..."
 echo "===================================="
 sleep 1
 
-# --- 1️⃣ System dependencies ---
+# --- 1️⃣ Check system dependencies ---
 echo "🔍 Checking system requirements..."
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -27,8 +27,8 @@ if ! command -v python3 >/dev/null 2>&1; then
     sudo apt update && sudo apt install -y python3 python3-pip
 fi
 
-# --- 2️⃣ Ensure Python venv + ensurepip available ---
-echo "🔧 Ensuring Python virtual-env support..."
+# --- 2️⃣ Ensure venv + ensurepip are available ---
+echo "🔧 Ensuring Python virtual environment support..."
 if ! python3 -c "import ensurepip" >/dev/null 2>&1; then
     echo "📦 Installing python3-full (includes venv + ensurepip)..."
     sudo apt update
@@ -40,7 +40,7 @@ if ! command -v git >/dev/null 2>&1; then
     sudo apt install -y git
 fi
 
-# --- 3️⃣ Clone / update repo ---
+# --- 3️⃣ Clone or update repository ---
 if [ ! -d "$INSTALL_DIR" ]; then
     echo "⬇️ Cloning Telemoji Enhancer into $INSTALL_DIR"
     git clone "$REPO_URL" "$INSTALL_DIR"
@@ -52,7 +52,7 @@ fi
 
 cd "$INSTALL_DIR"
 
-# --- 4️⃣ Create or repair venv ---
+# --- 4️⃣ Create or repair virtual environment ---
 if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
     echo "✅ Valid virtual environment found."
 else
@@ -65,7 +65,7 @@ else
     }
 fi
 
-# --- 5️⃣ Install dependencies ---
+# --- 5️⃣ Install Python dependencies ---
 echo "📦 Installing Python dependencies..."
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
@@ -77,12 +77,12 @@ else
 fi
 deactivate
 
-# --- 6️⃣ Ensure launcher executable ---
+# --- 6️⃣ Ensure launcher is executable ---
 if [ -f "$INSTALL_DIR/telemoji.sh" ]; then
     chmod +x "$INSTALL_DIR/telemoji.sh"
 fi
 
-# --- 7️⃣ Create alias ---
+# --- 7️⃣ Create launcher alias ---
 create_alias() {
     local shell_rc="$1"
     if ! grep -q "telemoji" "$shell_rc" 2>/dev/null; then
@@ -103,7 +103,16 @@ else
     create_alias "$BASHRC_FILE"
 fi
 
-# --- 8️⃣ Done ---
+# --- 8️⃣ Auto-load alias in current session ---
+if [ -n "$BASH_VERSION" ] && [ -f "$BASHRC_FILE" ]; then
+    # shellcheck disable=SC1091
+    source "$BASHRC_FILE"
+elif [ -n "$ZSH_VERSION" ] && [ -f "$ZSHRC_FILE" ]; then
+    # shellcheck disable=SC1091
+    source "$ZSHRC_FILE"
+fi
+
+# --- 9️⃣ Done ---
 echo ""
 echo "✅ Installation completed successfully!"
 echo ""
