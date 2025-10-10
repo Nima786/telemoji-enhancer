@@ -10,7 +10,6 @@ import logging
 
 try:
     import telethon
-    import TelegramClient
 except ImportError:
     print("❌ Telethon is not installed. Run: pip install -r requirements.txt")
     sys.exit(1)
