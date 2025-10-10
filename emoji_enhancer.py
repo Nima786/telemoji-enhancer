@@ -1,239 +1,185 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Telemoji Enhancer
-Convert standard emojis in Telegram posts into premium custom emojis,
-with Markdown safety, multi-channel support, and multi-admin selection.
-"""
-
-import asyncio
-import configparser
-import logging
+import json
 import os
+import logging
 import re
+import asyncio
 from telethon import TelegramClient, events
 from telethon.tl.types import MessageEntityCustomEmoji
-from telethon.errors import MessageNotModifiedError
 
+# --- 🎨 Colors and Config ---
+class Colors:
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    CYAN = '\033[96m'
+    BOLD = '\033[1m'
+    RESET = '\033[0m'
 
-CONFIG_FILE = "emoji_enhancer.ini"
+CONFIG_FILE = 'enhance-emoji.ini'
+SESSION_FILE = 'enhancer.session'
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-log = logging.getLogger(__name__)
-
-
-# ------------------------- #
-# Emoji Conversion Map
-# ------------------------- #
-DEFAULT_EMOJI_MAP = {
-    "😎": 5436022382600000000,
-    "🔥": 5436022382600000001,
-    "❤️": 5436022382600000002,
-    "👍": 5436022382600000003,
-    "💪": 5436022382600000004,
-}
-
-
-# ------------------------- #
-# Config Manager
-# ------------------------- #
+# --- Config Helpers ---
 def load_config():
-    cfg = configparser.ConfigParser()
-    if not os.path.exists(CONFIG_FILE):
-        cfg["ADMINS"] = {}
-        cfg["CHANNELS"] = {}
-        cfg["EMOJIS"] = {k: str(v) for k, v in DEFAULT_EMOJI_MAP.items()}
-        with open(CONFIG_FILE, "w") as f:
-            cfg.write(f)
-    else:
-        cfg.read(CONFIG_FILE)
-    return cfg
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, 'r') as f:
+            try:
+                return json.load(f)
+            except json.JSONDecodeError:
+                return {}
+    return {}
 
+def save_config(config):
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=4)
+    logger.info(f"Configuration saved to {CONFIG_FILE}")
 
-def save_config(cfg):
-    with open(CONFIG_FILE, "w") as f:
-        cfg.write(f)
+def setup_credentials(config):
+    print(f"\n{Colors.CYAN}--- Configure Credentials ---{Colors.RESET}")
+    print("Press ENTER to keep the current value.")
+    current_api_id = config.get('api_id', '')
+    new_api_id = input(f"Enter your API ID [{current_api_id}]: ")
+    config['api_id'] = new_api_id if new_api_id else current_api_id
+    current_api_hash = config.get('api_hash', '')
+    new_api_hash = input(f"Enter your API Hash [{current_api_hash}]: ")
+    config['api_hash'] = new_api_hash if new_api_hash else current_api_hash
+    current_phone = config.get('phone', '')
+    new_phone = input(f"Enter your phone number [{current_phone}]: ")
+    config['phone'] = new_phone if new_phone else current_phone
+    current_channel = config.get('target_channel', '')
+    new_channel = input(f"Enter the target channel username [{current_channel}]: ")
+    config['target_channel'] = new_channel if new_channel else current_channel
+    return config
 
-
-# ------------------------- #
-# Emoji Enhancer
-# ------------------------- #
-async def enhance_message(client, event, emoji_map):
-    """Replace normal emojis with premium ones, keeping Markdown intact."""
-    try:
-        original_text = event.message.text or ""
-        if not original_text:
-            return
-
-        new_entities = event.message.entities or []
-        new_text = original_text
-
-        # Replace all occurrences of each emoji
-        for emoji, custom_id in emoji_map.items():
-            new_text = re.sub(re.escape(emoji), emoji, new_text)
-
-        # Skip if unchanged
-        if new_text == original_text:
-            return
-
-        # Build custom emoji entities
-        updated_entities = []
-        for match in re.finditer("|".join(map(re.escape, emoji_map.keys())), new_text):
-            emoji_char = match.group(0)
-            custom_id = int(emoji_map[emoji_char])
-            updated_entities.append(
-                MessageEntityCustomEmoji(
-                    offset=match.start(), length=len(emoji_char), document_id=custom_id
-                )
-            )
-
-        # Merge Markdown entities
-        if new_entities:
-            updated_entities.extend(new_entities)
-
-        await client.edit_message(
-            event.message.peer_id,
-            event.message.id,
-            new_text,
-            formatting_entities=updated_entities,
-        )
-
-        log.info(f"✅ Enhanced message {event.message.id} in {event.chat.title}")
-
-    except MessageNotModifiedError:
-        log.warning(f"⚠️ Message {event.message.id} unchanged (not modified).")
-    except Exception as e:
-        log.error(f"❌ Failed to enhance message {event.message.id}: {e}")
-
-
-# ------------------------- #
-# Telethon Client Setup
-# ------------------------- #
-async def start_monitor(admin_name, api_id, api_hash, phone, channels):
-    client = TelegramClient(admin_name, api_id, api_hash)
-
-    @client.on(events.NewMessage(chats=channels))
-    async def handler(event):
-        cfg = load_config()
-        emoji_map = {k: int(v) for k, v in cfg["EMOJIS"].items()}
-        await enhance_message(client, event, emoji_map)
-
-    await client.start(phone=phone)
-    log.info(f"Client started for admin '{admin_name}' monitoring: {channels}")
-    await client.run_until_disconnected()
-
-
-# ------------------------- #
-# Interactive Menu
-# ------------------------- #
-def main_menu():
-    cfg = load_config()
-
+def setup_emojis(config):
+    if 'emoji_map' not in config:
+        config['emoji_map'] = {}
     while True:
-        print("\n🚀 Telemoji Enhancer Main Menu")
-        print("================================")
-        print("1️⃣  Add Admin Account")
-        print("2️⃣  Add Channel to Monitor")
-        print("3️⃣  View/Edit Emoji Map")
-        print("4️⃣  Start Monitoring")
-        print("5️⃣  Exit")
-        choice = input("\nSelect option: ").strip()
-
-        if choice == "1":
-            add_admin(cfg)
-        elif choice == "2":
-            add_channel(cfg)
-        elif choice == "3":
-            manage_emoji_map(cfg)
-        elif choice == "4":
-            start_enhancer(cfg)
-        elif choice == "5":
-            print("👋 Exiting Telemoji Enhancer.")
+        print(f"\n{Colors.CYAN}--- Configure Emoji-to-ID Map ---{Colors.RESET}")
+        print("Get Custom Emoji IDs from @RawDataBot")
+        print(f"{Colors.YELLOW}1.{Colors.RESET} Add / Update an Emoji ID")
+        print(f"{Colors.YELLOW}2.{Colors.RESET} Delete an Emoji ID")
+        print(f"{Colors.YELLOW}3.{Colors.RESET} View Current Map")
+        print(f"{Colors.YELLOW}4.{Colors.RESET} Return to Main Menu")
+        choice = input("> ")
+        if choice == '1':
+            standard = input("Enter the standard emoji to replace: ")
+            custom_id = input(f"Enter the Custom Emoji ID for '{standard}': ")
+            config['emoji_map'][standard] = custom_id
+            print(f"{Colors.GREEN}Map updated.{Colors.RESET}")
+        elif choice == '2':
+            standard = input("Enter the standard emoji to delete from the map: ")
+            if standard in config['emoji_map']:
+                del config['emoji_map'][standard]
+                print(f"'{standard}' removed from the map.")
+            else:
+                print("Emoji not found in the map.")
+        elif choice == '3':
+            if not config['emoji_map']:
+                print("\nYour emoji-to-ID map is currently empty.")
+            else:
+                print("\n--- Current Emoji-to-ID Map ---")
+                for standard, custom_id in config['emoji_map'].items():
+                    print(f"  {standard}  ->  ID: {custom_id}")
+                print("-------------------------")
+        elif choice == '4':
             break
         else:
-            print("❌ Invalid choice.")
+            print("Invalid choice.")
+    return config
 
-
-def add_admin(cfg):
-    name = input("Admin name (unique): ").strip()
-    if not name:
-        print("❌ Invalid name.")
-        return
-    api_id = input("API ID: ").strip()
-    api_hash = input("API Hash: ").strip()
-    phone = input("Phone number (+countrycode): ").strip()
-    cfg["ADMINS"][name] = f"{api_id}:{api_hash}:{phone}"
-    save_config(cfg)
-    print(f"✅ Admin '{name}' added.")
-
-
-def add_channel(cfg):
-    channel = input("Channel username (e.g., @mychannel): ").strip()
-    if not channel:
-        print("❌ Invalid channel.")
-        return
-    cfg["CHANNELS"][channel] = "True"
-    save_config(cfg)
-    print(f"✅ Channel '{channel}' added for monitoring.")
-
-
-def manage_emoji_map(cfg):
-    emojis = cfg["EMOJIS"]
-    print("\n🔤 Current Emoji → Custom ID Map:")
-    for i, (emoji, eid) in enumerate(emojis.items(), start=1):
-        print(f"  {i}. {emoji} → {eid}")
-    print("\n1️⃣  Add new emoji\n2️⃣  Edit existing\n3️⃣  Delete\n4️⃣  Back")
-    sub = input("Choose: ").strip()
-
-    if sub == "1":
-        emoji = input("Emoji: ").strip()
-        eid = input("Custom Emoji ID: ").strip()
-        emojis[emoji] = eid
-    elif sub == "2":
-        emoji = input("Emoji to edit: ").strip()
-        if emoji in emojis:
-            emojis[emoji] = input("New Custom Emoji ID: ").strip()
-    elif sub == "3":
-        emoji = input("Emoji to delete: ").strip()
-        emojis.pop(emoji, None)
-
-    save_config(cfg)
-    print("✅ Emoji map updated.")
-
-
-def start_enhancer(cfg):
-    if not cfg["ADMINS"]:
-        print("⚠️ No admins configured.")
-        return
-    if not cfg["CHANNELS"]:
-        print("⚠️ No channels configured.")
-        return
-
-    print("\n👥 Available Admins:")
-    admins = list(cfg["ADMINS"].keys())
-    for i, name in enumerate(admins, start=1):
-        print(f"  {i}. {name}")
-    idx = input("Select admin: ").strip()
-
+# --- 🤖 Main Logic ---
+async def start_monitoring(config):
     try:
-        admin_name = admins[int(idx) - 1]
-    except (IndexError, ValueError):
-        print("❌ Invalid choice.")
-        return
+        api_id, api_hash, phone = config.get('api_id'), config.get('api_hash'), config.get('phone')
+        target_channel, emoji_map = config.get('target_channel'), config.get('emoji_map', {})
+        if not all([api_id, api_hash, phone, target_channel]):
+            logger.error("Credentials are not fully configured.")
+            return
 
-    api_id, api_hash, phone = cfg["ADMINS"][admin_name].split(":")
-    channels = list(cfg["CHANNELS"].keys())
+        client = TelegramClient(SESSION_FILE, int(api_id), api_hash)
 
-    print(f"\n📡 Starting monitor for {admin_name} on {len(channels)} channel(s)...")
-    asyncio.run(start_monitor(admin_name, api_id, api_hash, phone, channels))
+        @client.on(events.NewMessage(chats=target_channel))
+        async def emoji_enhancer_handler(event):
+            text = event.message.text
+            if not text:
+                return
 
+            # --- ✅ Step 1: Parse Markdown safely (cross-version compatible) ---
+            try:
+                parsed_text, parsed_entities = await client._parse_message_text(text, 'md')
+            except TypeError:
+                parsed_text, parsed_entities = await client._parse_message_text(text=text, parse_mode='md')
 
-# ------------------------- #
-# Entry Point
-# ------------------------- #
+            # --- ✅ Step 2: Build emoji entities (handles multiple occurrences) ---
+            matches = []
+            for emoji, doc_id in emoji_map.items():
+                for m in re.finditer(re.escape(emoji), parsed_text):
+                    matches.append((m.start(), m.end(), emoji, int(doc_id)))
+
+            matches.sort(key=lambda x: x[0])  # Sort by start position
+
+            new_entities = []
+            for start, end, emoji, doc_id in matches:
+                prefix = parsed_text[:start]
+                offset = len(prefix.encode('utf-16-le')) // 2
+                length = len(emoji.encode('utf-16-le')) // 2
+                new_entities.append(
+                    MessageEntityCustomEmoji(offset=offset, length=length, document_id=doc_id)
+                )
+
+            if not new_entities:
+                return
+
+            # --- ✅ Step 3: Merge Markdown + custom emoji entities ---
+            final_entities = (parsed_entities or []) + new_entities
+            final_entities.sort(key=lambda e: e.offset)
+
+            try:
+                await event.edit(parsed_text, formatting_entities=final_entities)
+                logger.info(
+                    f"✅ Enhanced message {event.message.id} with {len(new_entities)} custom emoji entity(ies)"
+                )
+            except Exception as e:
+                logger.error(f"❌ Edit failed for message {event.message.id}: {e}")
+
+        await client.start(phone=phone)
+        logger.info(f"Client started! Monitoring channel '{target_channel}' (Markdown + Emoji Safe)")
+        await client.run_until_disconnected()
+
+    except Exception as e:
+        logger.critical(f"A critical error occurred: {e}")
+
+# --- ▶️ Menu ---
+async def main():
+    config = load_config()
+    while True:
+        print(f"\n{Colors.BOLD}{Colors.GREEN}================")
+        print("  Emoji Enhancer (Final Multi-Emoji + Markdown Safe)")
+        print(f"================{Colors.RESET}")
+        print(f"{Colors.YELLOW}1.{Colors.RESET} Configure Credentials")
+        print(f"{Colors.YELLOW}2.{Colors.RESET} Configure Emoji-to-ID Map")
+        print(f"{Colors.YELLOW}3.{Colors.RESET} Start Monitoring")
+        print(f"{Colors.YELLOW}4.{Colors.RESET} Exit")
+        print("----------------")
+        choice = input("Select an option: ")
+        if choice == '1':
+            config = setup_credentials(config)
+            save_config(config)
+        elif choice == '2':
+            config = setup_emojis(config)
+            save_config(config)
+        elif choice == '3':
+            if not config.get('api_id'):
+                print("\nPlease configure credentials first.")
+                continue
+            await start_monitoring(config)
+            break
+        elif choice == '4':
+            print("Exiting.")
+            break
+        else:
+            print("Invalid option.")
+
 if __name__ == "__main__":
-    main_menu()
+    asyncio.run(main())
