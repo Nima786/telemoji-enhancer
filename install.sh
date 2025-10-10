@@ -25,7 +25,16 @@ echo "🔍 Checking system requirements..."
 
 if ! command -v python3 >/dev/null 2>&1; then
     echo "📦 Installing Python3..."
-    sudo apt update && sudo apt install -y python3 python3-venv python3-pip
+    sudo apt update && sudo apt install -y python3 python3-pip
+fi
+
+# Ensure venv module is available
+if ! python3 -m venv --help >/dev/null 2>&1; then
+    echo "📦 Installing Python venv module..."
+    sudo apt install -y python3-venv || \
+    sudo apt install -y python3.12-venv || \
+    sudo apt install -y python3.11-venv || \
+    sudo apt install -y python3.10-venv
 fi
 
 if ! command -v git >/dev/null 2>&1; then
