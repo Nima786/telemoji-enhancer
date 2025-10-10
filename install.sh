@@ -22,16 +22,16 @@ sleep 1
 # --- 1️⃣ Check and install dependencies ---
 echo "🔍 Checking system requirements..."
 
-# --- Python check ---
+# --- Python base ---
 if ! command -v python3 >/dev/null 2>&1; then
     echo "📦 Installing Python3..."
     sudo apt update && sudo apt install -y python3 python3-pip
 fi
 
-# --- Ensure Python venv module is available ---
+# --- venv module (ensure before use) ---
 echo "🔧 Ensuring Python venv module is available..."
 if ! python3 -m venv --help >/dev/null 2>&1; then
-    echo "📦 Installing Python venv module..."
+    echo "📦 Installing python3-venv package..."
     sudo apt update
     sudo apt install -y python3-venv || \
     sudo apt install -y python3.12-venv || \
@@ -39,7 +39,7 @@ if ! python3 -m venv --help >/dev/null 2>&1; then
     sudo apt install -y python3.10-venv
 fi
 
-# --- Git check ---
+# --- Git ---
 if ! command -v git >/dev/null 2>&1; then
     echo "📦 Installing Git..."
     sudo apt install -y git
@@ -57,7 +57,16 @@ fi
 
 cd "$INSTALL_DIR"
 
-# --- 3️⃣ Verify, repair, or create virtual environment ---
+# --- 3️⃣ Validate venv package truly exists before proceeding ---
+if ! python3 -c "import ensurepip" >/dev/null 2>&1; then
+    echo "⚙️ Installing ensurepip (via python3-venv)..."
+    sudo apt install -y python3-venv || \
+    sudo apt install -y python3.12-venv || \
+    sudo apt install -y python3.11-venv || \
+    sudo apt install -y python3.10-venv
+fi
+
+# --- 4️⃣ Create or repair virtual environment ---
 if [ -d "$VENV_DIR" ]; then
     if [ -f "$VENV_DIR/bin/activate" ]; then
         echo "✅ Valid virtual environment found."
@@ -68,21 +77,17 @@ if [ -d "$VENV_DIR" ]; then
     fi
 else
     echo "⚙️ Creating new virtual environment..."
-    python3 -m venv "$VENV_DIR"
+    python3 -m venv "$VENV_DIR" || {
+        echo "❌ Virtual environment creation failed. Installing venv module..."
+        sudo apt install -y python3-venv || \
+        sudo apt install -y python3.12-venv || \
+        sudo apt install -y python3.11-venv || \
+        sudo apt install -y python3.10-venv
+        python3 -m venv "$VENV_DIR"
+    }
 fi
 
-# If creation failed, try fixing dependencies and retry
-if [ ! -f "$VENV_DIR/bin/activate" ]; then
-    echo "❌ Virtual environment creation failed. Attempting to fix..."
-    sudo apt install -y python3-venv || \
-    sudo apt install -y python3.12-venv || \
-    sudo apt install -y python3.11-venv || \
-    sudo apt install -y python3.10-venv
-    rm -rf "$VENV_DIR"
-    python3 -m venv "$VENV_DIR"
-fi
-
-# --- 4️⃣ Install Python dependencies ---
+# --- 5️⃣ Install Python dependencies ---
 echo "📦 Installing Python dependencies..."
 if [ -f "$VENV_DIR/bin/activate" ]; then
     # shellcheck disable=SC1091
@@ -95,17 +100,17 @@ if [ -f "$VENV_DIR/bin/activate" ]; then
     fi
     deactivate
 else
-    echo "❌ Could not find or create a valid Python virtual environment."
+    echo "❌ Could not create a valid Python virtual environment."
     echo "Please ensure python3-venv is installed and rerun the installer."
     exit 1
 fi
 
-# --- 5️⃣ Ensure launcher is executable ---
+# --- 6️⃣ Ensure launcher is executable ---
 if [ -f "$INSTALL_DIR/telemoji.sh" ]; then
     chmod +x "$INSTALL_DIR/telemoji.sh"
 fi
 
-# --- 6️⃣ Create launcher alias ---
+# --- 7️⃣ Create launcher alias ---
 create_alias() {
     local shell_rc="$1"
     if ! grep -q "telemoji" "$shell_rc" 2>/dev/null; then
@@ -130,7 +135,7 @@ else
     create_alias "$BASHRC_FILE"
 fi
 
-# --- 7️⃣ Final message ---
+# --- 8️⃣ Done ---
 echo ""
 echo "✅ Installation completed successfully!"
 echo ""
