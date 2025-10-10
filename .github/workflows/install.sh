@@ -6,6 +6,12 @@
 # One-click setup for Python + Telethon environment
 # Works on Ubuntu/Debian/most Linux distributions
 
+# shellcheck disable=SC1091
+source "$VENV_DIR/bin/activate"
+
+# shellcheck disable=SC2129
+echo "" >> "$shell_rc"
+
 set -e  # stop on error
 
 REPO_URL="https://github.com/Nima786/telemoji-enhancer.git"
