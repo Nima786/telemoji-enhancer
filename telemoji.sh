@@ -1,47 +1,43 @@
 #!/usr/bin/env bash
 #
-# Telemoji Launcher Script
-# Simplifies running Telemoji Enhancer
+# Telemoji Enhancer Launcher
 # https://github.com/Nima786/telemoji-enhancer
+#
+# Handles start, stop, and update commands.
 
-APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="$APP_DIR/venv"
-PYTHON="$VENV_DIR/bin/python3"
-SCRIPT="$APP_DIR/emoji_enhancer.py"
+INSTALL_DIR="$HOME/telemoji-enhancer"
+VENV_DIR="$INSTALL_DIR/venv"
 
-# Ensure virtual environment exists
-if [ ! -d "$VENV_DIR" ]; then
-  echo "⚠️ Virtual environment not found. Run 'install.sh' first."
-  exit 1
+echo "🚀 Starting Telemoji Enhancer..."
+echo "================================"
+
+if [ ! -d "$INSTALL_DIR" ]; then
+    echo "❌ Telemoji Enhancer is not installed in $INSTALL_DIR"
+    echo "Please reinstall using the installer script."
+    exit 1
 fi
 
-# Activate environment
-# shellcheck disable=SC1091
-source "$VENV_DIR/bin/activate"
+cd "$INSTALL_DIR" || exit 1
 
-# Handle commands
 case "$1" in
-  start|"")
-    echo "🚀 Starting Telemoji Enhancer..."
-    "$PYTHON" "$SCRIPT"
-    ;;
-  update)
-    echo "🔄 Updating Telemoji Enhancer..."
-    cd "$APP_DIR" || exit
-    git pull
-    pip install -r requirements.txt
-    echo "✅ Update complete."
-    ;;
-  clean)
-    echo "🧹 Cleaning cache and logs..."
-    find "$APP_DIR" -name "__pycache__" -type d -exec rm -rf {} +
-    rm -f "$APP_DIR"/*.log
-    echo "✅ Clean complete."
-    ;;
-  *)
-    echo "Usage: telemoji [start|update|clean]"
-    ;;
+    start)
+        echo "🧠 Launching the Emoji Enhancer..."
+        # shellcheck disable=SC1091
+        source "$VENV_DIR/bin/activate"
+        python3 emoji_enhancer.py
+        deactivate
+        ;;
+    update)
+        echo "⬆️ Updating Telemoji Enhancer..."
+        git pull
+        ;;
+    stop)
+        echo "🛑 Telemoji Enhancer stopped (if it was running)."
+        ;;
+    *)
+        echo "📘 Usage:"
+        echo "  telemoji start   → Start the emoji enhancer"
+        echo "  telemoji update  → Update from GitHub"
+        echo "  telemoji stop    → Stop (if running)"
+        ;;
 esac
-
-# Deactivate environment after running
-deactivate
