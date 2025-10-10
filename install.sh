@@ -22,12 +22,13 @@ sleep 1
 # --- 1️⃣ Check system dependencies ---
 echo "🔍 Checking system requirements..."
 
+# Python
 if ! command -v python3 >/dev/null 2>&1; then
     echo "📦 Installing Python3..."
     sudo apt update && sudo apt install -y python3 python3-pip
 fi
 
-# --- 2️⃣ Ensure venv + ensurepip are available ---
+# --- 2️⃣ Ensure venv + ensurepip available ---
 echo "🔧 Ensuring Python virtual environment support..."
 if ! python3 -c "import ensurepip" >/dev/null 2>&1; then
     echo "📦 Installing python3-full (includes venv + ensurepip)..."
@@ -35,6 +36,7 @@ if ! python3 -c "import ensurepip" >/dev/null 2>&1; then
     sudo apt install -y python3-full || sudo apt install -y python3-venv
 fi
 
+# Git
 if ! command -v git >/dev/null 2>&1; then
     echo "📦 Installing Git..."
     sudo apt install -y git
@@ -82,7 +84,7 @@ if [ -f "$INSTALL_DIR/telemoji.sh" ]; then
     chmod +x "$INSTALL_DIR/telemoji.sh"
 fi
 
-# --- 7️⃣ Create launcher alias ---
+# --- 7️⃣ Create and activate launcher alias immediately ---
 create_alias() {
     local shell_rc="$1"
     if ! grep -q "telemoji" "$shell_rc" 2>/dev/null; then
@@ -93,6 +95,9 @@ create_alias() {
             echo "alias telemoji='$INSTALL_DIR/telemoji.sh'"
         } >> "$shell_rc"
     fi
+
+    # Make the alias available instantly in current session
+    alias telemoji="$INSTALL_DIR/telemoji.sh"
 }
 
 if [[ "$SHELL" == *"bash"* ]]; then
@@ -103,16 +108,7 @@ else
     create_alias "$BASHRC_FILE"
 fi
 
-# --- 8️⃣ Auto-load alias in current session ---
-if [ -n "$BASH_VERSION" ] && [ -f "$BASHRC_FILE" ]; then
-    # shellcheck disable=SC1091
-    source "$BASHRC_FILE"
-elif [ -n "$ZSH_VERSION" ] && [ -f "$ZSHRC_FILE" ]; then
-    # shellcheck disable=SC1091
-    source "$ZSHRC_FILE"
-fi
-
-# --- 9️⃣ Done ---
+# --- 8️⃣ Done ---
 echo ""
 echo "✅ Installation completed successfully!"
 echo ""
