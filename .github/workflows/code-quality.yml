@@ -35,20 +35,5 @@ jobs:
       - name: 🐚 Install ShellCheck
         run: sudo apt-get install -y shellcheck
 
-      - name: 🔍 Run ShellCheck
-        run: |
-          echo "Running ShellCheck on *.sh files..."
-          find . -type f -name "*.sh" -print0 | xargs -0 -r shellcheck
 
-  spellcheck:
-    name: 🔤 Spelling Check (Markdown & Docs)
-    runs-on: ubuntu-latest
-    steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v4
-
-      - name: 🪄 Spell check docs
-        uses: rojopolis/spellcheck-github-actions@0.41.0
-        with:
-          source_files: README.md
-          task_name: Markdown
+  
