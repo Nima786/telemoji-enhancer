@@ -242,6 +242,7 @@ async def start_monitoring(config, auto=False):
                 text=text, parse_mode='md'
             )
 
+        
         matches = []
         for emoji, doc_id in config['emoji_map'].items():
             for m in re.finditer(re.escape(emoji), parsed_text):
@@ -315,6 +316,7 @@ async def main():
             break
         else:
             print("Invalid option.")
+
 
 async def auto_start():
     """Run monitoring directly without showing the menu."""
