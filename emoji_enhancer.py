@@ -65,6 +65,7 @@ def setup_admins(config):
             api_hash = input("Enter API Hash: ").strip()
             config["admins"][phone] = {"api_id": api_id, "api_hash": api_hash}
             print(f"{Colors.GREEN}Admin {phone} added/updated.{Colors.RESET}")
+
         elif choice == '2':
             if not config["admins"]:
                 print("No admins to delete.")
@@ -79,6 +80,7 @@ def setup_admins(config):
                 print(f"Removed admin {phone}")
             else:
                 print("Invalid selection.")
+
         elif choice == '3':
             if not config["admins"]:
                 print("No admins configured.")
@@ -89,6 +91,7 @@ def setup_admins(config):
                         f"{phone} → ID:{creds['api_id']}, "
                         f"HASH:{creds['api_hash'][:6]}****"
                     )
+
         elif choice == '4':
             break
         else:
@@ -113,6 +116,7 @@ def setup_channels(config):
                 print(f"{Colors.GREEN}Added {ch}{Colors.RESET}")
             else:
                 print("Already exists or invalid.")
+
         elif choice == '2':
             if not config["channels"]:
                 print("No channels added yet.")
@@ -126,6 +130,7 @@ def setup_channels(config):
                 print(f"Removed {removed}")
             else:
                 print("Invalid selection.")
+
         elif choice == '3':
             if not config["channels"]:
                 print("No channels configured.")
@@ -133,6 +138,7 @@ def setup_channels(config):
                 print("\n--- Configured Channels ---")
                 for i, ch in enumerate(config["channels"], start=1):
                     print(f"{i}. {ch}")
+
         elif choice == '4':
             break
         else:
@@ -159,6 +165,7 @@ def setup_emojis(config):
             custom_id = input(f"Enter Custom Emoji ID for '{standard}': ").strip()
             config['emoji_map'][standard] = custom_id
             print(f"{Colors.GREEN}Map updated.{Colors.RESET}")
+
         elif choice == '2':
             if not config['emoji_map']:
                 print("Map is empty.")
@@ -173,6 +180,7 @@ def setup_emojis(config):
                 print(f"Deleted '{key}' from map.")
             else:
                 print("Invalid selection.")
+
         elif choice == '3':
             if not config['emoji_map']:
                 print("Map is empty.")
@@ -182,6 +190,7 @@ def setup_emojis(config):
                     config['emoji_map'].items(), start=1
                 ):
                     print(f"{i}. {standard} → ID: {cid}")
+
         elif choice == '4':
             break
         else:
@@ -200,7 +209,6 @@ async def start_monitoring(config, auto=False):
         return
 
     admins = list(config["admins"].keys())
-
     if auto:
         selected_admin = admins[0]
         print(f"🤖 Auto-selected admin: {selected_admin}")
@@ -218,52 +226,66 @@ async def start_monitoring(config, auto=False):
     api_id, api_hash, phone = creds["api_id"], creds["api_hash"], selected_admin
     client = TelegramClient(f"enhancer_{phone}.session", int(api_id), api_hash)
 
+    # --- Rate limit setup ---
+    processing_lock = asyncio.Lock()
+    last_processed = {}
+
     async def handler(event):
-        text = event.message.text
-        if not text:
-            return
+        async with processing_lock:
+            msg_id = event.message.id
+            now = asyncio.get_event_loop().time()
+            if msg_id in last_processed and now - last_processed[msg_id] < 3:
+                return
+            last_processed[msg_id] = now
 
-        try:
-            parsed_text, parsed_entities = await client._parse_message_text(text, 'md')
-        except TypeError:
-            parsed_text, parsed_entities = await client._parse_message_text(
-                text=text, parse_mode='md'
-            )
+            text = event.message.text
+            if not text:
+                return
 
-        matches = []
-        for emoji, doc_id in config['emoji_map'].items():
-            for m in re.finditer(re.escape(emoji), parsed_text):
-                matches.append((m.start(), m.end(), emoji, int(doc_id)))
-
-        matches.sort(key=lambda x: x[0])
-        new_entities = []
-
-        for start, end, emoji, doc_id in matches:
-            prefix = parsed_text[:start]
-            offset = len(prefix.encode('utf-16-le')) // 2
-            length = len(emoji.encode('utf-16-le')) // 2
-            new_entities.append(
-                MessageEntityCustomEmoji(
-                    offset=offset, length=length, document_id=doc_id
+            try:
+                parsed_text, parsed_entities = await client._parse_message_text(
+                    text, 'md'
                 )
-            )
+            except TypeError:
+                parsed_text, parsed_entities = await client._parse_message_text(
+                    text=text, parse_mode='md'
+                )
 
-        if not new_entities:
-            return
+            matches = []
+            for emoji, doc_id in config['emoji_map'].items():
+                for m in re.finditer(re.escape(emoji), parsed_text):
+                    matches.append((m.start(), m.end(), emoji, int(doc_id)))
 
-        final_entities = (parsed_entities or []) + new_entities
-        final_entities.sort(key=lambda e: e.offset)
+            matches.sort(key=lambda x: x[0])
+            new_entities = []
 
-        try:
-            await event.edit(parsed_text, formatting_entities=final_entities)
-            logger.info(
-                f"✅ Enhanced message {event.message.id} in {event.chat.username}"
-            )
-        except Exception as e:
-            logger.error(f"❌ Failed editing message {event.message.id}: {e}")
+            for start, end, emoji, doc_id in matches:
+                prefix = parsed_text[:start]
+                offset = len(prefix.encode('utf-16-le')) // 2
+                length = len(emoji.encode('utf-16-le')) // 2
+                new_entities.append(
+                    MessageEntityCustomEmoji(
+                        offset=offset, length=length, document_id=doc_id
+                    )
+                )
+
+            if not new_entities:
+                return
+
+            final_entities = (parsed_entities or []) + new_entities
+            final_entities.sort(key=lambda e: e.offset)
+
+            try:
+                await event.edit(parsed_text, formatting_entities=final_entities)
+                logger.info(
+                    f"✅ Enhanced message {event.message.id} in {event.chat.username}"
+                )
+            except Exception as e:
+                logger.error(f"❌ Failed editing message {event.message.id}: {e}")
 
     for ch in config["channels"]:
         client.add_event_handler(handler, events.NewMessage(chats=ch))
+        client.add_event_handler(handler, events.MessageEdited(chats=ch))
         logger.info(f"Monitoring channel: {ch}")
 
     await client.start(phone=phone)
