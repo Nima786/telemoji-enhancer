@@ -143,9 +143,11 @@ else
     create_alias "$BASHRC_FILE"
 fi
 
-# Source shell config immediately
-if [ -f "$BASHRC_FILE" ]; then
-    source "$BASHRC_FILE"
+# Make command globally available
+if [ ! -f "/usr/local/bin/telemoji" ]; then
+    echo "⚙️ Linking telemoji command globally..."
+    sudo ln -sf "$INSTALL_DIR/telemoji.sh" /usr/local/bin/telemoji
+    sudo chmod +x /usr/local/bin/telemoji
 fi
 
 # --- 7️⃣ Done (safe auto-launch if interactive) ---
