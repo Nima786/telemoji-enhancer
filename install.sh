@@ -4,7 +4,7 @@
 # https://github.com/Nima786/telemoji-enhancer
 #
 # One-click setup for Python + Telethon environment
-# Auto-launches safely if interactive
+# Works instantly without reboot or sourcing .bashrc
 
 set -e  # stop on error
 
@@ -121,7 +121,7 @@ EOF
 
 chmod +x "$INSTALL_DIR/telemoji.sh"
 
-# --- 6️⃣ Create alias ---
+# --- 6️⃣ Create and activate alias instantly ---
 create_alias() {
     local shell_rc="$1"
     if ! grep -q "telemoji=" "$shell_rc" 2>/dev/null; then
@@ -132,6 +132,7 @@ create_alias() {
             echo "alias telemoji='$INSTALL_DIR/telemoji.sh'"
         } >> "$shell_rc"
     fi
+    # Activate the alias in this current session
     alias telemoji="$INSTALL_DIR/telemoji.sh"
 }
 
@@ -143,7 +144,13 @@ else
     create_alias "$BASHRC_FILE"
 fi
 
-# --- 7️⃣ Done (safe auto-launch if interactive) ---
+# Source the updated shell configuration (for immediate alias use)
+if [ -f "$BASHRC_FILE" ]; then
+    # shellcheck disable=SC1091
+    source "$BASHRC_FILE"
+fi
+
+# --- 7️⃣ Finish up ---
 echo ""
 echo "✅ Installation completed successfully!"
 echo ""
@@ -151,7 +158,7 @@ echo ""
 if [ -t 0 ]; then
     echo "🎉 Launching Telemoji Enhancer now..."
     echo ""
-    bash "$INSTALL_DIR/telemoji.sh" start
+    telemoji start
 else
     echo "💡 Non-interactive shell detected."
     echo "To start Telemoji Enhancer, run:"
