@@ -242,7 +242,7 @@ async def start_monitoring(config, auto=False):
                 text=text, parse_mode='md'
             )
 
-        
+
         matches = []
         for emoji, doc_id in config['emoji_map'].items():
             for m in re.finditer(re.escape(emoji), parsed_text):
@@ -266,7 +266,7 @@ async def start_monitoring(config, auto=False):
 
         final_entities = (parsed_entities or []) + new_entities
         final_entities.sort(key=lambda e: e.offset)
-
+        
         try:
             await event.edit(parsed_text, formatting_entities=final_entities)
             logger.info(
@@ -286,6 +286,7 @@ async def start_monitoring(config, auto=False):
 # --- ▶️ Main Menu ---
 async def main():
     config = load_config()
+
 
     while True:
         print(f"\n{Colors.BOLD}{Colors.GREEN}=============================")
