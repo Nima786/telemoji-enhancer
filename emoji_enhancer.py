@@ -282,8 +282,6 @@ async def start_monitoring(config, auto=False):
     logger.info(f"Client started under admin {phone}")
     await client.run_until_disconnected()
 
-
-
 # --- ▶️ Main Menu ---
 async def main():
     config = load_config()
