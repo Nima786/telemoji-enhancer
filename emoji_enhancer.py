@@ -3,6 +3,7 @@ import os
 import logging
 import re
 import asyncio
+import sys
 from telethon import TelegramClient, events
 from telethon.tl.types import MessageEntityCustomEmoji
 
@@ -276,6 +277,10 @@ async def start_monitoring(config):
     logger.info(f"Client started under admin {phone}")
     await client.run_until_disconnected()
 
+async def auto_start():
+    """Run monitoring directly without showing the menu."""
+    config = load_config()
+    await start_monitoring(config)
 
 # --- ▶️ Main Menu ---
 async def main():
@@ -311,20 +316,13 @@ async def main():
         else:
             print("Invalid option.")
 
-
-import sys
-
-
 async def auto_start():
     """Run monitoring directly without showing the menu."""
     config = load_config()
     await start_monitoring(config)
 
-
 if __name__ == "__main__":
-    # If --headless flag provided, skip menu
     if len(sys.argv) > 1 and sys.argv[1] == "--headless":
         asyncio.run(auto_start())
     else:
         asyncio.run(main())
-
