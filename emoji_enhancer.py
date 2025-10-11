@@ -1,252 +1,251 @@
-import json
-import os
-import logging
-import re
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Telemoji Enhancer
+Convert standard emojis in Telegram posts into premium custom emojis,
+with Markdown safety, multi-channel support, and multi-admin selection.
+"""
+
 import asyncio
+import configparser
+import logging
+import os
+import re
 from telethon import TelegramClient, events
 from telethon.tl.types import MessageEntityCustomEmoji
-# --- 🎨 Colors and Logging Setup ---
-class Colors:
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    CYAN = '\033[96m'
-    BOLD = '\033[1m'
-    RESET = '\033[0m'
-CONFIG_FILE = 'enhance-emoji.ini'
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
-# --- ⚙️ Config Management ---
+from telethon.errors import MessageNotModifiedError
+
+
+CONFIG_FILE = "emoji_enhancer.ini"
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+log = logging.getLogger(__name__)
+
+# ------------------------- #
+# Emoji Conversion Map
+# ------------------------- #
+
+DEFAULT_EMOJI_MAP = {
+    "😎": 5436022382600000000,
+    "🔥": 5436022382600000001,
+    "❤️": 5436022382600000002,
+    "👍": 5436022382600000003,
+    "💪": 5436022382600000004,
+}
+
+# ------------------------- #
+# Config Manager
+# ------------------------- #
+
+
 def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r') as f:
-            try:
-                cfg = json.load(f)
-            except json.JSONDecodeError:
-                cfg = {}
+    cfg = configparser.ConfigParser()
+    if not os.path.exists(CONFIG_FILE):
+        cfg["ADMINS"] = {}
+        cfg["CHANNELS"] = {}
+        cfg["EMOJIS"] = {k: str(v) for k, v in DEFAULT_EMOJI_MAP.items()}
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            cfg.write(f)
     else:
-        cfg = {}
-    # Auto-upgrade to new schema
-    cfg.setdefault("admins", {})
-    cfg.setdefault("channels", [])
-    cfg.setdefault("emoji_map", {})
+        cfg.read(CONFIG_FILE, encoding="utf-8")
     return cfg
-def save_config(config):
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(config, f, indent=4)
-    logger.info(f"Configuration saved to {CONFIG_FILE}")
-# --- 🧑‍💻 Admin Management ---
-def setup_admins(config):
+
+
+def save_config(cfg):
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        cfg.write(f)
+
+# ------------------------- #
+# Emoji Enhancer
+# ------------------------- #
+
+
+async def enhance_message(client, event, emoji_map):
+    """Replace normal emojis with premium ones, keeping Markdown intact."""
+    try:
+        original_text = event.message.text or ""
+        if not original_text:
+            return
+
+        new_entities = event.message.entities or []
+        new_text = original_text
+
+        # Replace all occurrences of each emoji
+        for emoji, _ in emoji_map.items():
+            new_text = re.sub(re.escape(emoji), emoji, new_text)
+
+        # Skip if unchanged
+        if new_text == original_text:
+            return
+
+        # Build custom emoji entities
+        updated_entities = []
+        for match in re.finditer("|".join(map(re.escape, emoji_map.keys())), new_text):
+            emoji_char = match.group(0)
+            custom_id = int(emoji_map[emoji_char])
+            updated_entities.append(
+                MessageEntityCustomEmoji(
+                    offset=match.start(),
+                    length=len(emoji_char),
+                    document_id=custom_id,
+                )
+            )
+
+        # Merge Markdown entities
+        if new_entities:
+            updated_entities.extend(new_entities)
+
+        await client.edit_message(
+            event.message.peer_id,
+            event.message.id,
+            new_text,
+            formatting_entities=updated_entities,
+        )
+
+        log.info("✅ Enhanced message %s in %s", event.message.id, event.chat.title)
+
+    except MessageNotModifiedError:
+        log.warning("⚠️ Message %s unchanged (not modified).", event.message.id)
+    except Exception as e:
+        log.error("❌ Failed to enhance message %s: %s", event.message.id, e)
+
+# ------------------------- #
+# Telethon Client Setup
+# ------------------------- #
+
+
+async def start_monitor(admin_name, api_id, api_hash, phone, channels):
+    client = TelegramClient(admin_name, api_id, api_hash)
+
+    @client.on(events.NewMessage(chats=channels))
+    async def handler(event):
+        cfg = load_config()
+        emoji_map = {k: int(v) for k, v in cfg["EMOJIS"].items()}
+        await enhance_message(client, event, emoji_map)
+
+    await client.start(phone=phone)
+    log.info("Client started for admin '%s' monitoring: %s", admin_name, channels)
+    await client.run_until_disconnected()
+
+# ------------------------- #
+# Interactive Menu
+# ------------------------- #
+
+
+def main_menu():
+    cfg = load_config()
+
     while True:
-        print(f"\n{Colors.CYAN}--- Configure Admin Accounts ---{Colors.RESET}")
-        print(f"{Colors.YELLOW}1.{Colors.RESET} Add / Update Admin")
-        print(f"{Colors.YELLOW}2.{Colors.RESET} Delete Admin")
-        print(f"{Colors.YELLOW}3.{Colors.RESET} View Admins")
-        print(f"{Colors.YELLOW}4.{Colors.RESET} Return to Main Menu")
-        choice = input("> ")
-        if choice == '1':
-            phone = input("Enter admin phone number (e.g. +1234567890): ").strip()
-            api_id = input("Enter API ID: ").strip()
-            api_hash = input("Enter API Hash: ").strip()
-            config["admins"][phone] = {"api_id": api_id, "api_hash": api_hash}
-            print(f"{Colors.GREEN}Admin {phone} added/updated.{Colors.RESET}")
-        elif choice == '2':
-            if not config["admins"]:
-                print("No admins to delete.")
-                continue
-            print("\n--- Current Admins ---")
-            for i, phone in enumerate(config["admins"], start=1):
-                print(f"{i}. {phone}")
-            idx = input("Select admin number to delete: ")
-            if idx.isdigit() and 1 <= int(idx) <= len(config["admins"]):
-                phone = list(config["admins"].keys())[int(idx) - 1]
-                del config["admins"][phone]
-                print(f"Removed admin {phone}")
-            else:
-                print("Invalid selection.")
-        elif choice == '3':
-            if not config["admins"]:
-                print("No admins configured.")
-            else:
-                print("\n--- Configured Admins ---")
-                for phone, creds in config["admins"].items():
-                    print(f"{phone} → ID:{creds['api_id']}, HASH:{creds['api_hash'][:6]}****")
-        elif choice == '4':
+        print("\n🚀 Telemoji Enhancer Main Menu")
+        print("================================")
+        print("1️⃣  Add Admin Account")
+        print("2️⃣  Add Channel to Monitor")
+        print("3️⃣  View/Edit Emoji Map")
+        print("4️⃣  Start Monitoring")
+        print("5️⃣  Exit")
+
+        choice = input("\nSelect option: ").strip()
+
+        if choice == "1":
+            add_admin(cfg)
+        elif choice == "2":
+            add_channel(cfg)
+        elif choice == "3":
+            manage_emoji_map(cfg)
+        elif choice == "4":
+            start_enhancer(cfg)
+        elif choice == "5":
+            print("👋 Exiting Telemoji Enhancer.")
             break
         else:
-            print("Invalid option.")
-    return config
-# --- 📢 Channel Management ---
-def setup_channels(config):
-    while True:
-        print(f"\n{Colors.CYAN}--- Configure Channels ---{Colors.RESET}")
-        print(f"{Colors.YELLOW}1.{Colors.RESET} Add Channel")
-        print(f"{Colors.YELLOW}2.{Colors.RESET} Remove Channel")
-        print(f"{Colors.YELLOW}3.{Colors.RESET} View Channels")
-        print(f"{Colors.YELLOW}4.{Colors.RESET} Return to Main Menu")
-        choice = input("> ")
-        if choice == '1':
-            ch = input("Enter target channel username (e.g. @mychannel): ").strip()
-            if ch and ch not in config["channels"]:
-                config["channels"].append(ch)
-                print(f"{Colors.GREEN}Added {ch}{Colors.RESET}")
-            else:
-                print("Already exists or invalid.")
-        elif choice == '2':
-            if not config["channels"]:
-                print("No channels added yet.")
-                continue
-            print("\n--- Current Channels ---")
-            for i, ch in enumerate(config["channels"], start=1):
-                print(f"{i}. {ch}")
-            idx = input("Select channel number to remove: ")
-            if idx.isdigit() and 1 <= int(idx) <= len(config["channels"]):
-                removed = config["channels"].pop(int(idx) - 1)
-                print(f"Removed {removed}")
-            else:
-                print("Invalid selection.")
-        elif choice == '3':
-            if not config["channels"]:
-                print("No channels configured.")
-            else:
-                print("\n--- Configured Channels ---")
-                for i, ch in enumerate(config["channels"], start=1):
-                    print(f"{i}. {ch}")
-        elif choice == '4':
-            break
-        else:
-            print("Invalid choice.")
-    return config
-# --- 😀 Emoji Map Management ---
-def setup_emojis(config):
-    if 'emoji_map' not in config:
-        config['emoji_map'] = {}
-    while True:
-        print(f"\n{Colors.CYAN}--- Configure Emoji-to-ID Map ---{Colors.RESET}")
-        print("Get Custom Emoji IDs from @RawDataBot")
-        print(f"{Colors.YELLOW}1.{Colors.RESET} Add / Update Emoji ID")
-        print(f"{Colors.YELLOW}2.{Colors.RESET} Delete Emoji ID")
-        print(f"{Colors.YELLOW}3.{Colors.RESET} View Current Map")
-        print(f"{Colors.YELLOW}4.{Colors.RESET} Return to Main Menu")
-        choice = input("> ")
-        if choice == '1':
-            standard = input("Enter standard emoji: ").strip()
-            custom_id = input(f"Enter Custom Emoji ID for '{standard}': ").strip()
-            config['emoji_map'][standard] = custom_id
-            print(f"{Colors.GREEN}Map updated.{Colors.RESET}")
-        elif choice == '2':
-            if not config['emoji_map']:
-                print("Map is empty.")
-                continue
-            print("\n--- Current Emoji Map ---")
-            for i, (standard, cid) in enumerate(config['emoji_map'].items(), start=1):
-                print(f"{i}. {standard} → ID: {cid}")
-            idx = input("Select number to delete: ")
-            if idx.isdigit() and 1 <= int(idx) <= len(config['emoji_map']):
-                key = list(config['emoji_map'].keys())[int(idx) - 1]
-                del config['emoji_map'][key]
-                print(f"Deleted '{key}' from map.")
-            else:
-                print("Invalid selection.")
-        elif choice == '3':
-            if not config['emoji_map']:
-                print("Map is empty.")
-            else:
-                print("\n--- Current Emoji Map ---")
-                for i, (standard, cid) in enumerate(config['emoji_map'].items(),
-start=1):
-                    print(f"{i}. {standard} → ID: {cid}")
-        elif choice == '4':
-            break
-        else:
-            print("Invalid choice.")
-    return config
-# --- 🤖 Main Telethon Logic ---
-async def start_monitoring(config):
-    if not config["admins"]:
+            print("❌ Invalid choice.")
+
+
+def add_admin(cfg):
+    name = input("Admin name (unique): ").strip()
+    if not name:
+        print("❌ Invalid name.")
+        return
+    api_id = input("API ID: ").strip()
+    api_hash = input("API Hash: ").strip()
+    phone = input("Phone number (+countrycode): ").strip()
+    cfg["ADMINS"][name] = f"{api_id}:{api_hash}:{phone}"
+    save_config(cfg)
+    print(f"✅ Admin '{name}' added.")
+
+
+def add_channel(cfg):
+    channel = input("Channel username (e.g., @mychannel): ").strip()
+    if not channel:
+        print("❌ Invalid channel.")
+        return
+    cfg["CHANNELS"][channel] = "True"
+    save_config(cfg)
+    print(f"✅ Channel '{channel}' added for monitoring.")
+
+
+def manage_emoji_map(cfg):
+    emojis = cfg["EMOJIS"]
+    print("\n🔤 Current Emoji → Custom ID Map:")
+    for i, (emoji, eid) in enumerate(emojis.items(), start=1):
+        print(f"  {i}. {emoji} → {eid}")
+
+    print("\n1️⃣  Add new emoji")
+    print("2️⃣  Edit existing")
+    print("3️⃣  Delete")
+    print("4️⃣  Back")
+    sub = input("Choose: ").strip()
+
+    if sub == "1":
+        emoji = input("Emoji: ").strip()
+        eid = input("Custom Emoji ID: ").strip()
+        emojis[emoji] = eid
+    elif sub == "2":
+        emoji = input("Emoji to edit: ").strip()
+        if emoji in emojis:
+            emojis[emoji] = input("New Custom Emoji ID: ").strip()
+    elif sub == "3":
+        emoji = input("Emoji to delete: ").strip()
+        emojis.pop(emoji, None)
+
+    save_config(cfg)
+    print("✅ Emoji map updated.")
+
+
+def start_enhancer(cfg):
+    if not cfg["ADMINS"]:
         print("⚠️ No admins configured.")
         return
-    if not config["channels"]:
+    if not cfg["CHANNELS"]:
         print("⚠️ No channels configured.")
         return
-    print("\n--- Available Admins ---")
-    admins = list(config["admins"].keys())
-    for i, phone in enumerate(admins, start=1):
-        print(f"{i}. {phone}")
-    sel = input("Select which admin to use: ")
-    if not sel.isdigit() or int(sel) < 1 or int(sel) > len(admins):
-        print("Invalid selection.")
+
+    print("\n👥 Available Admins:")
+    admins = list(cfg["ADMINS"].keys())
+    for i, name in enumerate(admins, start=1):
+        print(f"  {i}. {name}")
+    idx = input("Select admin: ").strip()
+
+    try:
+        admin_name = admins[int(idx) - 1]
+    except (IndexError, ValueError):
+        print("❌ Invalid choice.")
         return
-    selected_admin = admins[int(sel) - 1]
-    creds = config["admins"][selected_admin]
-    api_id, api_hash, phone = creds["api_id"], creds["api_hash"], selected_admin
-    client = TelegramClient(f"enhancer_{phone}.session", int(api_id), api_hash)
-    # --- Handler for each channel ---
-    async def handler(event):
-        text = event.message.text
-        if not text:
-            return
-        try:
-            parsed_text, parsed_entities = await client._parse_message_text(text, 'md')
-        except TypeError:
-            parsed_text, parsed_entities = await client._parse_message_text(text=text, parse_mode='md')
-        matches = []
-        for emoji, doc_id in config['emoji_map'].items():
-            for m in re.finditer(re.escape(emoji), parsed_text):
-                matches.append((m.start(), m.end(), emoji, int(doc_id)))
-        matches.sort(key=lambda x: x[0])
-        new_entities = []
-        for start, end, emoji, doc_id in matches:
-            prefix = parsed_text[:start]
-            offset = len(prefix.encode('utf-16-le')) // 2
-            length = len(emoji.encode('utf-16-le')) // 2
-            new_entities.append(
-                MessageEntityCustomEmoji(offset=offset, length=length, document_id=doc_id)
-            )
-        if not new_entities:
-            return
-        final_entities = (parsed_entities or []) + new_entities
-        final_entities.sort(key=lambda e: e.offset)
-        try:
-            await event.edit(parsed_text, formatting_entities=final_entities)
-            logger.info(f"✅  Enhanced message {event.message.id} in {event.chat.username}")
-        except Exception as e:
-            logger.error(f"❌  Failed editing message {event.message.id}: {e}")
-    for ch in config["channels"]:
-        client.add_event_handler(handler, events.NewMessage(chats=ch))
-        logger.info(f"Monitoring channel: {ch}")
-    await client.start(phone=phone)
-    logger.info(f"Client started under admin {phone}")
-    await client.run_until_disconnected()
-# --- ▶️ Main Menu ---
-async def main():
-    config = load_config()
-    while True:
-        print(f"\n{Colors.BOLD}{Colors.GREEN}=============================")
-        print(" Emoji Enhancer Pro (Multi-Admin + Multi-Channel)")
-        print(f"============================={Colors.RESET}")
-        print(f"{Colors.YELLOW}1.{Colors.RESET} Configure Admins")
-        print(f"{Colors.YELLOW}2.{Colors.RESET} Configure Channels")
-        print(f"{Colors.YELLOW}3.{Colors.RESET} Configure Emoji Map")
-        print(f"{Colors.YELLOW}4.{Colors.RESET} Start Monitoring")
-        print(f"{Colors.YELLOW}5.{Colors.RESET} Exit")
-        print("----------------")
-        choice = input("Select an option: ")
-        if choice == '1':
-            config = setup_admins(config)
-            save_config(config)
-        elif choice == '2':
-            config = setup_channels(config)
-            save_config(config)
-        elif choice == '3':
-            config = setup_emojis(config)
-            save_config(config)
-        elif choice == '4':
-            await start_monitoring(config)
-            break
-        elif choice == '5':
-            print("Exiting.")
-            break
-        else:
-            print("Invalid option.")
+
+    api_id, api_hash, phone = cfg["ADMINS"][admin_name].split(":")
+    channels = list(cfg["CHANNELS"].keys())
+
+    print(f"\n📡 Starting monitor for {admin_name} on {len(channels)} channel(s)...")
+    asyncio.run(start_monitor(admin_name, api_id, api_hash, phone, channels))
+
+# ------------------------- #
+# Entry Point
+# ------------------------- #
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main_menu()
