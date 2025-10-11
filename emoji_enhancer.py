@@ -318,12 +318,10 @@ async def main():
         else:
             print("Invalid option.")
 
-
 async def auto_start():
     """Run monitoring directly without showing the menu."""
     config = load_config()
     await start_monitoring(config, auto=True)
-
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--headless":
