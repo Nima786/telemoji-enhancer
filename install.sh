@@ -150,6 +150,12 @@ if [ -f "$BASHRC_FILE" ]; then
     source "$BASHRC_FILE"
 fi
 
+# Source the updated bashrc so the alias works immediately
+if [ -f "$BASHRC_FILE" ]; then
+    # shellcheck disable=SC1091
+    source "$BASHRC_FILE"
+fi
+
 # --- 7️⃣ Finish up ---
 echo ""
 echo "✅ Installation completed successfully!"
