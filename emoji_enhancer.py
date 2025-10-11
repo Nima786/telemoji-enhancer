@@ -37,7 +37,6 @@ def load_config():
     else:
         cfg = {}
 
-    # Auto-upgrade to new schema
     cfg.setdefault("admins", {})
     cfg.setdefault("channels", [])
     cfg.setdefault("emoji_map", {})
@@ -66,7 +65,6 @@ def setup_admins(config):
             api_hash = input("Enter API Hash: ").strip()
             config["admins"][phone] = {"api_id": api_id, "api_hash": api_hash}
             print(f"{Colors.GREEN}Admin {phone} added/updated.{Colors.RESET}")
-
         elif choice == '2':
             if not config["admins"]:
                 print("No admins to delete.")
@@ -81,7 +79,6 @@ def setup_admins(config):
                 print(f"Removed admin {phone}")
             else:
                 print("Invalid selection.")
-
         elif choice == '3':
             if not config["admins"]:
                 print("No admins configured.")
@@ -92,7 +89,6 @@ def setup_admins(config):
                         f"{phone} → ID:{creds['api_id']}, "
                         f"HASH:{creds['api_hash'][:6]}****"
                     )
-
         elif choice == '4':
             break
         else:
@@ -117,7 +113,6 @@ def setup_channels(config):
                 print(f"{Colors.GREEN}Added {ch}{Colors.RESET}")
             else:
                 print("Already exists or invalid.")
-
         elif choice == '2':
             if not config["channels"]:
                 print("No channels added yet.")
@@ -131,7 +126,6 @@ def setup_channels(config):
                 print(f"Removed {removed}")
             else:
                 print("Invalid selection.")
-
         elif choice == '3':
             if not config["channels"]:
                 print("No channels configured.")
@@ -139,7 +133,6 @@ def setup_channels(config):
                 print("\n--- Configured Channels ---")
                 for i, ch in enumerate(config["channels"], start=1):
                     print(f"{i}. {ch}")
-
         elif choice == '4':
             break
         else:
@@ -166,7 +159,6 @@ def setup_emojis(config):
             custom_id = input(f"Enter Custom Emoji ID for '{standard}': ").strip()
             config['emoji_map'][standard] = custom_id
             print(f"{Colors.GREEN}Map updated.{Colors.RESET}")
-
         elif choice == '2':
             if not config['emoji_map']:
                 print("Map is empty.")
@@ -181,7 +173,6 @@ def setup_emojis(config):
                 print(f"Deleted '{key}' from map.")
             else:
                 print("Invalid selection.")
-
         elif choice == '3':
             if not config['emoji_map']:
                 print("Map is empty.")
@@ -191,7 +182,6 @@ def setup_emojis(config):
                     config['emoji_map'].items(), start=1
                 ):
                     print(f"{i}. {standard} → ID: {cid}")
-
         elif choice == '4':
             break
         else:
@@ -199,7 +189,6 @@ def setup_emojis(config):
     return config
 
 
-# --- 🤖 Main Telethon Logic ---
 # --- 🤖 Main Telethon Logic ---
 async def start_monitoring(config, auto=False):
     if not config["admins"]:
@@ -229,7 +218,6 @@ async def start_monitoring(config, auto=False):
     api_id, api_hash, phone = creds["api_id"], creds["api_hash"], selected_admin
     client = TelegramClient(f"enhancer_{phone}.session", int(api_id), api_hash)
 
-    # --- Handler for each channel ---
     async def handler(event):
         text = event.message.text
         if not text:
@@ -241,7 +229,6 @@ async def start_monitoring(config, auto=False):
             parsed_text, parsed_entities = await client._parse_message_text(
                 text=text, parse_mode='md'
             )
-
 
         matches = []
         for emoji, doc_id in config['emoji_map'].items():
@@ -266,7 +253,7 @@ async def start_monitoring(config, auto=False):
 
         final_entities = (parsed_entities or []) + new_entities
         final_entities.sort(key=lambda e: e.offset)
-        
+
         try:
             await event.edit(parsed_text, formatting_entities=final_entities)
             logger.info(
@@ -283,10 +270,10 @@ async def start_monitoring(config, auto=False):
     logger.info(f"Client started under admin {phone}")
     await client.run_until_disconnected()
 
+
 # --- ▶️ Main Menu ---
 async def main():
     config = load_config()
-
 
     while True:
         print(f"\n{Colors.BOLD}{Colors.GREEN}=============================")
@@ -323,6 +310,7 @@ async def auto_start():
     """Run monitoring directly without showing the menu."""
     config = load_config()
     await start_monitoring(config, auto=True)
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--headless":
