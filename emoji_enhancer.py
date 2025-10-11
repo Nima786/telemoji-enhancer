@@ -312,5 +312,19 @@ async def main():
             print("Invalid option.")
 
 
+import sys
+
+
+async def auto_start():
+    """Run monitoring directly without showing the menu."""
+    config = load_config()
+    await start_monitoring(config)
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    # If --headless flag provided, skip menu
+    if len(sys.argv) > 1 and sys.argv[1] == "--headless":
+        asyncio.run(auto_start())
+    else:
+        asyncio.run(main())
+
