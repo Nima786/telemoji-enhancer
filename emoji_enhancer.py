@@ -200,7 +200,8 @@ def setup_emojis(config):
 
 
 # --- 🤖 Main Telethon Logic ---
-async def start_monitoring(config):
+# --- 🤖 Main Telethon Logic ---
+async def start_monitoring(config, auto=False):
     if not config["admins"]:
         print("⚠️ No admins configured.")
         return
@@ -209,17 +210,21 @@ async def start_monitoring(config):
         print("⚠️ No channels configured.")
         return
 
-    print("\n--- Available Admins ---")
     admins = list(config["admins"].keys())
-    for i, phone in enumerate(admins, start=1):
-        print(f"{i}. {phone}")
-    sel = input("Select which admin to use: ")
 
-    if not sel.isdigit() or int(sel) < 1 or int(sel) > len(admins):
-        print("Invalid selection.")
-        return
+    if auto:
+        selected_admin = admins[0]
+        print(f"🤖 Auto-selected admin: {selected_admin}")
+    else:
+        print("\n--- Available Admins ---")
+        for i, phone in enumerate(admins, start=1):
+            print(f"{i}. {phone}")
+        sel = input("Select which admin to use: ")
+        if not sel.isdigit() or int(sel) < 1 or int(sel) > len(admins):
+            print("Invalid selection.")
+            return
+        selected_admin = admins[int(sel) - 1]
 
-    selected_admin = admins[int(sel) - 1]
     creds = config["admins"][selected_admin]
     api_id, api_hash, phone = creds["api_id"], creds["api_hash"], selected_admin
     client = TelegramClient(f"enhancer_{phone}.session", int(api_id), api_hash)
@@ -276,6 +281,7 @@ async def start_monitoring(config):
     await client.start(phone=phone)
     logger.info(f"Client started under admin {phone}")
     await client.run_until_disconnected()
+
 
 
 # --- ▶️ Main Menu ---
