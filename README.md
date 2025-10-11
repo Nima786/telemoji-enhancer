@@ -1,97 +1,192 @@
 🚀 Telemoji Enhancer
 ====================
 
-**Telemoji Enhancer** is a lightweight Python + Telethon utility that automatically converts normal emojis into **Telegram Premium custom emojis** inside your channel posts — while keeping **Markdown formatting** intact and supporting multiple channels and admin accounts.
+A lightweight, multi-admin Telegram emoji enhancer that automatically converts standard emojis into **Premium Custom Emojis** — powered by **Telethon**.
 
 * * *
 
-⚡ Quick Install
----------------
-
-Copy and paste this command into your terminal to install everything automatically:
+⚡️ Quick Install
+----------------
 
     curl -sSL https://raw.githubusercontent.com/Nima786/telemoji-enhancer/main/install.sh | bash
+    
+
+This one-line command installs Python, creates a virtual environment, clones the repository, and launches Telemoji Enhancer automatically.
 
 * * *
 
-✨ Features
-----------
+🧠 Features
+-----------
 
-*   ✅ Converts standard emojis into Premium custom emojis automatically
-*   ✅ Preserves Markdown (`**bold**`, `_italic_`, `[links](url)`, etc.)
-*   ✅ Supports multiple channels and multiple admins
-*   ✅ Interactive menu for easy setup and configuration
-*   ✅ One-click shell installer for any Linux server
-*   ✅ Works smoothly on Ubuntu, Debian, and similar distributions
-
-* * *
-
-📦 Installation Details
------------------------
-
-The one-click installer will:
-
-1.  Install Python 3 and Git (if missing)
-2.  Clone this repository
-3.  Create a Python virtual environment
-4.  Install dependencies
-5.  Create a `telemoji` command alias for quick start
-
-**Manual Installation (Optional):**
-
-git clone https://github.com/Nima786/telemoji-enhancer.git
-cd telemoji-enhancer
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python3 emoji\_enhancer.py
+*   Multi-admin and multi-channel support
+*   Automatic emoji-to-custom emoji conversion
+*   Auto-starts on reboot using `systemd`
+*   Simple, menu-driven configuration
+*   Headless background mode for 24/7 monitoring
 
 * * *
 
 ⚙️ Usage
 --------
 
-Start the interactive menu:
+### ▶️ Interactive Mode (Menu)
+
+Run manually to configure admins, channels, and emoji maps:
 
     telemoji start
+    
 
-Or run manually:
+This opens the interactive menu:
 
-    python3 emoji_enhancer.py
+    1. Configure Admins
+    2. Configure Channels
+    3. Configure Emoji Map
+    4. Start Monitoring
+    5. Exit
+    
+
+### 🧩 Background Service (Automatic)
+
+After setup, Telemoji runs automatically in the background after every reboot. It uses `systemd` to manage the process.
+
+Check service status:
+
+    sudo systemctl status telemoji
+    
+
+Restart manually if needed:
+
+    sudo systemctl restart telemoji
+    
 
 * * *
 
-🪄 Configuration
-----------------
+🛠️ Setting up systemd Service (Manual Step)
+--------------------------------------------
 
-All configuration is saved automatically in `enhance-emoji.ini` after first run.
+The installer does not yet create the background service automatically. You can set it up manually once after installation:
 
-*   Admin credentials (API ID, API hash, phone number)
-*   List of monitored Telegram channels
-*   Emoji → Custom ID mapping
+    sudo nano /etc/systemd/system/telemoji.service
+    
 
-You can manage everything through the built-in interactive menu.
+Then paste the following:
+
+    [Unit]
+    Description=Telemoji Enhancer Background Service
+    After=network.target
+    
+    [Service]
+    Type=simple
+    ExecStart=/root/telemoji-enhancer/venv/bin/python3 /root/telemoji-enhancer/emoji_enhancer.py --headless
+    WorkingDirectory=/root/telemoji-enhancer
+    Restart=always
+    StandardOutput=append:/root/telemoji-enhancer/telemoji.log
+    StandardError=append:/root/telemoji-enhancer/telemoji.log
+    
+    [Install]
+    WantedBy=multi-user.target
+    
+
+Save and exit, then enable and start it:
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable telemoji.service
+    sudo systemctl start telemoji.service
+    
+
+Check logs:
+
+    sudo systemctl status telemoji
+    tail -n 50 ~/telemoji-enhancer/telemoji.log
+    
 
 * * *
 
-🧑‍💻 Requirements
+👨‍💻 Managing Configuration
+----------------------------
+
+*   Configuration file: `~/telemoji-enhancer/enhance-emoji.ini`
+*   Edit manually using `nano` or rerun the menu via `telemoji start`
+*   To change which admin is used in headless mode:
+    1.  Open the config file
+    2.  Move your preferred admin to the top of the `"admins"` section
+
+* * *
+
+🔁 Updating
+-----------
+
+To update the enhancer to the latest GitHub version:
+
+    telemoji update
+    
+
+If you’ve modified local files manually and get a merge conflict, reset safely:
+
+    cd ~/telemoji-enhancer
+    sudo systemctl stop telemoji
+    git fetch --all
+    git reset --hard origin/main
+    chmod +x telemoji.sh
+    source ~/.bashrc
+    sudo systemctl daemon-reload
+    sudo systemctl start telemoji
+    
+
+* * *
+
+🧩 Optional: Background Auto-Reload
+-----------------------------------
+
+If you edit your configuration file and want to reload changes without restarting the service:
+
+    telemoji reload
+    
+
+* * *
+
+🧰 Manual Commands
 ------------------
 
-*   Python 3.9 or newer
-*   Telethon 1.33 or newer
-*   A Telegram Premium account (required to apply custom emojis)
+    telemoji start   → Launch interactive menu
+    telemoji update  → Update from GitHub (force sync)
+    telemoji stop    → Stop the background service
+    telemoji reload  → Reload configuration without restart
+    
 
 * * *
 
-📜 License
-----------
+📜 Logs
+-------
 
-This project is licensed under the [MIT License](https://github.com/Nima786/telemoji-enhancer/blob/main/LICENSE).
+View live logs or troubleshoot issues:
+
+    tail -f ~/telemoji-enhancer/telemoji.log
+    
 
 * * *
 
-💡 Credits
+💡 Notes
+--------
+
+*   After reboot, the background service starts automatically.
+*   If “Permission denied” occurs, run:
+    
+        chmod +x ~/telemoji-enhancer/telemoji.sh && source ~/.bashrc
+    
+*   To uninstall, remove the folder:
+    
+        rm -rf ~/telemoji-enhancer
+    
+
+* * *
+
+📄 License
 ----------
 
-Developed by [Nima Norouzi](https://github.com/Nima786)  
-Inspired by the Telegram community ❤️
+This project is licensed under the **MIT License** — free to use, modify, and distribute.  
+See the full license at: [MIT License](https://opensource.org/licenses/MIT)
+
+* * *
+
+**Repository:** [https://github.com/Nima786/telemoji-enhancer](https://github.com/Nima786/telemoji-enhancer)
