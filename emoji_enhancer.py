@@ -226,17 +226,17 @@ async def start_monitoring(config, auto=False):
     api_id, api_hash, phone = creds["api_id"], creds["api_hash"], selected_admin
     client = TelegramClient(f"enhancer_{phone}.session", int(api_id), api_hash)
 
-    # --- Rate limit setup ---
-   WINDOW_SECONDS   = 2  # dedupe window seconds
-    processing_lock = asyncio.Lock()
-    last_processed = {}
-
-    async def handler(event):
-        async with processing_lock:
-                    key = (event.chat_id, event.message.id)
-        now = asyncio.get_event_loop().time()
-        if key in last_processed and now - last_processed[key] < WINDOW_SECONDS:
-            return
+            # --- Rate limit setup ---
+           WINDOW_SECONDS   = 2  # dedupe window seconds
+            processing_lock = asyncio.Lock()
+            last_processed = {}
+        
+            async def handler(event):
+                async with processing_lock:
+                            key = (event.chat_id, event.message.id)
+                now = asyncio.get_event_loop().time()
+                if key in last_processed and now - last_processed[key] < WINDOW_SECONDS:
+                    return
                 last_processed[key] = now
 
             text = event.message.text
