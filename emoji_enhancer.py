@@ -226,61 +226,59 @@ async def start_monitoring(config, auto=False):
     api_id, api_hash, phone = creds["api_id"], creds["api_hash"], selected_admin
     client = TelegramClient(f"enhancer_{phone}.session", int(api_id), api_hash)
 
-            # --- Rate limit setup ---
-        # --- Rate limit setup ---
-        WINDOW_SECONDS = 2  # dedupe window seconds
-        processing_lock = asyncio.Lock()
-        last_processed = {}
+    # --- Rate limit setup ---
+    WINDOW_SECONDS = 2  # dedupe window seconds
+    processing_lock = asyncio.Lock()
+    last_processed = {}
 
-        async def handler(event):
-            async with processing_lock:
-                key = (event.chat_id, event.message.id)
-                now = asyncio.get_event_loop().time()
-                if key in last_processed and now - last_processed[key] < WINDOW_SECONDS:
-                    return
-                last_processed[key] = now
+    async def handler(event):
+        async with processing_lock:
+            key = (event.chat_id, event.message.id)
+            now = asyncio.get_event_loop().time()
+            if key in last_processed and now - last_processed[key] < WINDOW_SECONDS:
+                return
+            last_processed[key] = now
 
-                text = event.message.text
-                if not text:
-                    return
+            text = event.message.text
+            if not text:
+                return
 
-                parsed_text = text
-                parsed_entities = event.message.entities or []
+            parsed_text = text
+            parsed_entities = event.message.entities or []
 
-                matches = []
-                for emoji, doc_id in config['emoji_map'].items():
-                    for m in re.finditer(re.escape(emoji), parsed_text):
-                        matches.append((m.start(), m.end(), emoji, int(doc_id)))
+            matches = []
+            for emoji, doc_id in config['emoji_map'].items():
+                for m in re.finditer(re.escape(emoji), parsed_text):
+                    matches.append((m.start(), m.end(), emoji, int(doc_id)))
 
-                matches.sort(key=lambda x: x[0])
-                new_entities = []
+            matches.sort(key=lambda x: x[0])
+            new_entities = []
 
-                for start, end, emoji, doc_id in matches:
-                    prefix = parsed_text[:start]
-                    offset = len(prefix.encode('utf-16-le')) // 2
-                    length = len(emoji.encode('utf-16-le')) // 2
-                    new_entities.append(
-                        MessageEntityCustomEmoji(
-                            offset=offset,
-                            length=length,
-                            document_id=doc_id,
-                        )
+            for start, end, emoji, doc_id in matches:
+                prefix = parsed_text[:start]
+                offset = len(prefix.encode('utf-16-le')) // 2
+                length = len(emoji.encode('utf-16-le')) // 2
+                new_entities.append(
+                    MessageEntityCustomEmoji(
+                        offset=offset,
+                        length=length,
+                        document_id=doc_id,
                     )
+                )
 
-                if not new_entities:
-                    return
+            if not new_entities:
+                return
 
-                final_entities = (parsed_entities or []) + new_entities
-                final_entities.sort(key=lambda e: e.offset)
+            final_entities = (parsed_entities or []) + new_entities
+            final_entities.sort(key=lambda e: e.offset)
 
-                try:
-                    await event.edit(parsed_text, formatting_entities=final_entities)
-                    logger.info(
-                        f"✅ Enhanced message {event.message.id} in {event.chat.username}"
-                    )
-                except Exception as e:
-                    logger.error(f"❌ Failed editing message {event.message.id}: {e}")
-
+            try:
+                await event.edit(parsed_text, formatting_entities=final_entities)
+                logger.info(
+                    f"✅ Enhanced message {event.message.id} in {event.chat.username}"
+                )
+            except Exception as e:
+                logger.error(f"❌ Failed editing message {event.message.id}: {e}")
 
     for ch in config["channels"]:
         client.add_event_handler(handler, events.NewMessage(chats=ch))
