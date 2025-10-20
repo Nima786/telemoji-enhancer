@@ -227,29 +227,24 @@ async def start_monitoring(config, auto=False):
     client = TelegramClient(f"enhancer_{phone}.session", int(api_id), api_hash)
 
     # --- Rate limit setup ---
+   WINDOW_SECONDS   = 2  # dedupe window seconds
     processing_lock = asyncio.Lock()
     last_processed = {}
 
     async def handler(event):
         async with processing_lock:
-            msg_id = event.message.id
-            now = asyncio.get_event_loop().time()
-            if msg_id in last_processed and now - last_processed[msg_id] < 3:
-                return
-            last_processed[msg_id] = now
+                    key = (event.chat_id, event.message.id)
+        now = asyncio.get_event_loop().time()
+        if key in last_processed and now - last_processed[key] < WINDOW_SECONDS:
+            return
+                last_processed[key] = now
 
             text = event.message.text
             if not text:
                 return
 
-            try:
-                parsed_text, parsed_entities = await client._parse_message_text(
-                    text, 'md'
-                )
-            except TypeError:
-                parsed_text, parsed_entities = await client._parse_message_text(
-                    text=text, parse_mode='md'
-                )
+                    parsed_text = text
+                        parsed_entities = event.message.entities or []
 
             matches = []
             for emoji, doc_id in config['emoji_map'].items():
