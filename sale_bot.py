@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-#!/usr/bin/env python3
+# !/usr/bin/env python3
 
 import os
 import logging
@@ -100,11 +100,11 @@ def save_user(user_id, username=None, first_name=None, last_name=None):
         return False
     try:
         with conn.cursor() as cursor:
-            sql = """INSERT INTO users (user_id, username, first_name, last_name) 
-                     VALUES (%s, %s, %s, %s) 
-                     ON DUPLICATE KEY UPDATE 
-                     username = VALUES(username), 
-                     first_name = VALUES(first_name), 
+            sql = """INSERT INTO users (user_id, username, first_name, last_name)
+                     VALUES (%s, %s, %s, %s)
+                     ON DUPLICATE KEY UPDATE
+                     username = VALUES(username),
+                     first_name = VALUES(first_name),
                      last_name = VALUES(last_name)"""
             cursor.execute(sql, (user_id, username, first_name, last_name))
         conn.commit()
@@ -210,9 +210,9 @@ def get_user_cart(user_id):
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                """SELECT c.cart_id, c.product_id, c.quantity, p.product_name, p.price 
-                   FROM cart c 
-                   LEFT JOIN products p ON c.product_id = p.product_id 
+                """SELECT c.cart_id, c.product_id, c.quantity, p.product_name, p.price
+                   FROM cart c
+                   LEFT JOIN products p ON c.product_id = p.product_id
                    WHERE c.user_id = %s""",
                 (user_id,)
             )
@@ -241,10 +241,10 @@ def save_product_to_db(product_info):
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                """INSERT INTO products (product_id, product_name, price) 
-                   VALUES (%s, %s, %s) 
-                   ON DUPLICATE KEY UPDATE 
-                   product_name = VALUES(product_name), 
+                """INSERT INTO products (product_id, product_name, price)
+                   VALUES (%s, %s, %s)
+                   ON DUPLICATE KEY UPDATE
+                   product_name = VALUES(product_name),
                    price = VALUES(price)""",
                 (product_info['product_id'], product_info['name'], product_info['price'])
             )
@@ -288,11 +288,11 @@ def get_user_orders(user_id):
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                """SELECT o.order_id, o.total_amount, o.status, o.created_at, COUNT(oi.item_id) as item_count 
-                   FROM orders o 
-                   LEFT JOIN order_items oi ON o.order_id = oi.order_id 
-                   WHERE o.user_id = %s 
-                   GROUP BY o.order_id 
+                """SELECT o.order_id, o.total_amount, o.status, o.created_at, COUNT(oi.item_id) as item_count
+                   FROM orders o
+                   LEFT JOIN order_items oi ON o.order_id = oi.order_id
+                   WHERE o.user_id = %s
+                   GROUP BY o.order_id
                    ORDER BY o.created_at DESC""",
                 (user_id,)
             )
@@ -326,7 +326,7 @@ def create_cart_keyboard(context):
     else:
         # Fallback: direct link to channel when no specific post
         back_button = InlineKeyboardButton("📱 رفتن به کانال", url="https://t.me/hom_plast")
-    
+
     keyboard = [
         [back_button, InlineKeyboardButton("✏️ ویرایش", callback_data="edit_cart")],
         [InlineKeyboardButton("✅ تکمیل", callback_data="finish_order"), InlineKeyboardButton("❌ لغو", callback_data="cancel_order")]
@@ -337,7 +337,7 @@ def create_cart_keyboard(context):
 def create_main_menu_keyboard():
     """Helper function to create main menu keyboard"""
     keyboard = [
-        [KeyboardButton("🛒 مشاهده سبد خرید"), KeyboardButton("✍️ ثبت نام")], 
+        [KeyboardButton("🛒 مشاهده سبد خرید"), KeyboardButton("✍️ ثبت نام")],
         [KeyboardButton("📦 سفارشات من"), KeyboardButton("☎️ پشتیبانی")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -377,22 +377,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif arg.startswith('product_'):
             # Parse: product_SKU_mMSGID_cCHANNEL
             # Need to handle channel names with underscores like hom_plast
-            
+
             message_id = None
             channel_ref = None
             product_sku = ''
-            
+
             # Find the positions of _m and _c markers
             m_index = arg.find('_m')
             c_index = arg.find('_c')
-            
+
             if m_index > 0 and c_index > m_index:
                 # Extract SKU (everything between 'product_' and '_m')
                 product_sku = arg[8:m_index]  # 8 = len('product_')
-                
+
                 # Extract message_id (between '_m' and '_c')
                 message_id = arg[m_index+2:c_index]
-                
+
                 # Extract channel (everything after '_c')
                 channel_ref = arg[c_index+2:]
             else:
@@ -450,15 +450,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup,
         parse_mode='Markdown'
     )
-    
+
     # Always show channel button
     await update.message.reply_text(
         "**📱 بازگشت به کانال:**",
         reply_markup=create_channel_button(),
         parse_mode='Markdown'
     )
-
-
 
 async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('awaiting_new_quantity'):
@@ -489,7 +487,7 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check stock and apply dynamic minimum
         if product_info.get('manage_stock') and product_info.get('stock_quantity'):
             available_stock = product_info['stock_quantity']
-            
+
             # Get OTHER items in cart (excluding the one being edited)
             cart_items = get_user_cart(user_id)
             other_cart_qty = 0
@@ -498,15 +496,15 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     continue  # Skip the item being edited
                 if str(item['product_id']) == str(product_info['product_id']):
                     other_cart_qty += item['quantity']
-            
+
             remaining_stock = available_stock - other_cart_qty
-            
+
             # Dynamic minimum: If remaining stock < original minimum, adjust to 1
             if remaining_stock < original_min:
                 effective_min = 1
             else:
                 effective_min = original_min
-            
+
             # Check minimum
             if new_quantity < effective_min:
                 await update.message.reply_text(
@@ -514,7 +512,7 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='Markdown'
                 )
                 return
-            
+
             # Check if new quantity exceeds available stock
             if new_quantity > remaining_stock:
                 await update.message.reply_text(
@@ -567,37 +565,37 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check stock availability INCLUDING what's already in cart
     user_id = update.effective_user.id
-    
+
     # DEBUG: Log product stock info
     logger.info(f"Product: {product_info['product_id']}, manage_stock: {product_info.get('manage_stock')}, stock_qty: {product_info.get('stock_quantity')}")
-    
+
     # Get current quantity in cart
     current_cart_qty = 0
     cart_items = get_user_cart(user_id)
-    
+
     # DEBUG: Show what's in cart
     logger.info(f"Cart items for user {user_id}: {[(item['product_id'], item['quantity']) for item in cart_items]}")
     logger.info(f"Looking for product_id: {product_info['product_id']}")
-    
+
     for item in cart_items:
         # Convert both to string for comparison (cart stores as int or str)
         if str(item['product_id']) == str(product_info['product_id']):
             current_cart_qty = item['quantity']
             logger.info(f"Found existing quantity in cart: {current_cart_qty}")
             break
-    
+
     # Calculate remaining stock after what's in cart
     if product_info.get('manage_stock') and product_info.get('stock_quantity'):
         available_stock = product_info['stock_quantity']
         remaining_stock = available_stock - current_cart_qty
-        
+
         # Dynamic minimum: If remaining stock < original minimum, adjust minimum to 1
         original_min = product_info['min_quantity']
         if remaining_stock < original_min:
             effective_min = 1  # Allow any quantity when stock is low
         else:
             effective_min = original_min
-        
+
         # Check minimum quantity with dynamic minimum
         if quantity < effective_min:
             await update.message.reply_text(
@@ -605,16 +603,16 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
             return
-        
+
         # Calculate total quantity (current in cart + new request)
         total_requested = current_cart_qty + quantity
-        
+
         # DEBUG: Log calculation
         logger.info(f"Stock check: current={current_cart_qty}, new={quantity}, total={total_requested}, available={available_stock}")
-        
+
         if total_requested > available_stock:
             remaining = available_stock - current_cart_qty
-            
+
             await update.message.reply_text(
                 f"**❌ موجودی کافی نیست!**\n\n"
                 f"**📦 در سبد شما:** {current_cart_qty} عدد\n"
@@ -627,7 +625,7 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     else:
         # No stock management - just check minimum quantity
-        logger.info(f"Stock check SKIPPED - manage_stock or stock_quantity not set")
+        logger.info("Stock check SKIPPED - manage_stock or stock_quantity not set")
         min_qty = product_info['min_quantity']
         if quantity < min_qty:
             await update.message.reply_text(
@@ -635,7 +633,7 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
             return
-    
+
     if add_to_cart(user_id, product_info['product_id'], quantity):
         context.user_data['awaiting_quantity'] = False
         cart_items = get_user_cart(user_id)
