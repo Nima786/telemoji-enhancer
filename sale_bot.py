@@ -328,8 +328,8 @@ def create_cart_keyboard(context):
         back_button = InlineKeyboardButton("📱 رفتن به کانال", url="https://t.me/hom_plast")
 
     keyboard = [
-        [back_button, InlineKeyboardButton("✏️ ویرایش", callback_data="edit_cart")],
-        [InlineKeyboardButton("✅ تکمیل", callback_data="finish_order"), InlineKeyboardButton("❌ لغو", callback_data="cancel_order")]
+        [back_button, InlineKeyboardButton("✏️ ویرایش سبد خرید", callback_data="edit_cart")],
+        [InlineKeyboardButton("✅ تکمیل سفارش", callback_data="finish_order"), InlineKeyboardButton("❌ لغو سبد خرید", callback_data="cancel_order")]
     ]
     return keyboard
 
@@ -907,6 +907,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = get_user_orders(user_id)
     if not orders:
         await update.message.reply_text("**📋 هنوز سفارشی ندارید.**", parse_mode='Markdown')
+        await update.message.reply_text("**📱 بازگشت به کانال:**", reply_markup=create_channel_button(), parse_mode='Markdown')
         return
     text = "**🛒 سفارشات شما:**\n\n"
     for order in orders:
@@ -918,6 +919,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"➖➖➖➖➖\n\n"
         )
     await update.message.reply_text(text, parse_mode='Markdown')
+    await update.message.reply_text("**📱 بازگشت به کانال:**", reply_markup=create_channel_button(), parse_mode='Markdown')
 
 
 async def register_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
