@@ -458,6 +458,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
+
 async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('awaiting_new_quantity'):
         text = update.message.text.strip()
