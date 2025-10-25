@@ -787,7 +787,46 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"**🙏 متشکریم!**"
                 )
                 await query.edit_message_text(confirmation, parse_mode='Markdown')
+                
+                # Calculate total amount and 2% discount
+                total_amount = sum(item.get('price', 0) * item['quantity'] for item in cart_items)
+                total_amount = float(total_amount)  # Convert Decimal to float
+                discounted_amount = int(total_amount * 0.98)  # 2% off
+                # Round down to nearest thousand
+                discounted_amount = (discounted_amount // 1000) * 1000
+                
+                logger.info(f"Sending promo message. Total: {total_amount}, Discounted: {discounted_amount}")
+                
+                # Send promotional message with website link
+                promo_keyboard = [[InlineKeyboardButton("🌐 homplast.com", url="https://homplast.com")]]
+                promo_markup = InlineKeyboardMarkup(promo_keyboard)
+                promo_message = (
+                    f"😍 می‌دونستی اگه این سفارش رو از طریق وبسایت ما انجام می‌دادی، "
+                    f"دو درصد تخفیف ویژه می‌گرفتی و بجای {int(total_amount):,} فقط "
+                    f"{discounted_amount:,} تومان پرداخت میکردی !!!"
+                )
+                try:
+                    await query.message.reply_text(
+                        promo_message,
+                        reply_markup=promo_markup,
+                        parse_mode='Markdown'
+                    )
+                    logger.info("Promo message sent successfully")
+                except Exception as e:
+                    logger.error(f"Failed to send promo message: {e}")
+                
+                # Send channel button after promo
                 await query.message.reply_text("**📱 بازگشت به کانال:**", reply_markup=create_channel_button(), parse_mode='Markdown')
+                
+                # Reset keyboard to main menu (removes any previous keyboards like "انصراف")
+                main_menu = create_main_menu_keyboard()
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text="**✅ سفارش شما ثبت شد!**\n\n**برای سفارش جدید، به کانال مراجعه کنید.**",
+                    reply_markup=main_menu,
+                    parse_mode='Markdown'
+                )
+                
                 admin_msg = (
                     f"**🔔 سفارش جدید!**\n\n"
                     f"**📋 #{order_id:04d}**\n"
