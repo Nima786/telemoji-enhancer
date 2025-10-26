@@ -1,5 +1,16 @@
 # -*- coding: utf-8 -*-
 # !/usr/bin/env python3
+"""
+Hom Plast Telegram Sales Bot
+Version: 1.0.1
+Last Updated: 2025-10-26
+Description: Customer ordering bot for Hom Plast channel
+"""
+
+__version__ = "1.0.1"
+__author__ = "Hom Plast Dev Team"
+__last_updated__ = "2025-10-26"
+
 
 import os
 import logging
@@ -26,6 +37,7 @@ WC_CONSUMER_SECRET = os.getenv('WC_CONSUMER_SECRET')
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+logger.info(f"Starting Hom Plast Sales Bot v{__version__}")
 
 
 def convert_persian_to_english(text):
@@ -254,7 +266,7 @@ def save_product_to_db(product_info):
         conn.close()
 
 
-def create_order(user_id, cart_items):
+def create_order(user_id, cart_items, customer_name=None, customer_phone=None):
     conn = get_db_connection()
     if not conn:
         return None
@@ -262,8 +274,8 @@ def create_order(user_id, cart_items):
         total = sum(item['price'] * item['quantity'] for item in cart_items if item['price'])
         with conn.cursor() as cursor:
             cursor.execute(
-                "INSERT INTO orders (user_id, total_amount, status) VALUES (%s, %s, 'pending')",
-                (user_id, total)
+                "INSERT INTO orders (user_id, customer_name, customer_phone, total_amount, status) VALUES (%s, %s, %s, %s, 'pending')",
+                (user_id, customer_name, customer_phone, total)
             )
             order_id = cursor.lastrowid
             for item in cart_items:
@@ -771,12 +783,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not cart_items:
                 await query.edit_message_text("**❌ سبد خالی!**", parse_mode='Markdown')
                 return
-            order_id = create_order(user_id, cart_items)
+            user_name = user_info.get('first_name', 'مشتری')
+            phone = user_info.get('phone_number')
+            order_id = create_order(user_id, cart_items, customer_name=user_name, customer_phone=phone)
             if order_id:
                 clear_user_cart(user_id)
                 cart_text = format_cart(cart_items)
-                user_name = user_info.get('first_name', 'مشتری')
-                phone = user_info.get('phone_number')
                 confirmation = (
                     f"**✅ سفارش ثبت شد!**\n\n"
                     f"**📋 شماره: {order_id:04d}**\n"
@@ -872,12 +884,13 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # reply_markup created above
             await update.message.reply_text("**❌ سبد خالی!**", reply_markup=reply_markup, parse_mode='Markdown')
             return
-        order_id = create_order(user_id, cart_items)
+        user_info = get_user_info(user_id)
+        user_name = user_info.get('first_name', 'مشتری') if user_info else 'مشتری'
+        phone = user_info.get('phone_number') if user_info else None
+        order_id = create_order(user_id, cart_items, customer_name=user_name, customer_phone=phone)
         if order_id:
             clear_user_cart(user_id)
             cart_text = format_cart(cart_items)
-            user_info = get_user_info(user_id)
-            user_name = user_info.get('first_name', 'مشتری') if user_info else 'مشتری'
             confirmation = (
                 f"**✅ سفارش ثبت شد!**\n\n"
                 f"**📋 شماره: {order_id:04d}**\n"
@@ -1068,12 +1081,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # reply_markup created above
                 await update.message.reply_text("**❌ سبد خالی!**", reply_markup=reply_markup, parse_mode='Markdown')
                 return
-            order_id = create_order(user_id, cart_items)
+            user_info = get_user_info(user_id)
+            user_name = user_info.get('first_name', 'مشتری') if user_info else 'مشتری'
+            phone = user_info.get('phone_number') if user_info else None
+            order_id = create_order(user_id, cart_items, customer_name=user_name, customer_phone=phone)
             if order_id:
                 clear_user_cart(user_id)
                 cart_text = format_cart(cart_items)
-                user_info = get_user_info(user_id)
-                user_name = user_info.get('first_name', 'مشتری') if user_info else 'مشتری'
                 confirmation = (
                     f"**✅ سفارش ثبت شد!**\n\n"
                     f"**📋 شماره: {order_id:04d}**\n"
@@ -1138,12 +1152,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("**لطفاً از منو یا کانال انتخاب کنید.**", parse_mode='Markdown')
 
 
+async def version_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show bot version"""
+    version_info = (
+        f"**🤖 ربات فروش هوم پلاست**\n\n"
+        f"**📌 نسخه:** {__version__}\n"
+        f"**📅 آخرین بروزرسانی:** {__last_updated__}"
+    )
+    await update.message.reply_text(version_info, parse_mode='Markdown')
+
+
 def main():
     logger.info("Starting bot...")
     application = Application.builder().token(BOT_TOKEN).build()
     from telegram import BotCommand
-    commands = [BotCommand("start", "شروع و منوی اصلی")]
+    commands = [BotCommand("start", "شروع و منوی اصلی"), BotCommand("version", "نسخه ربات")]
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("version", version_command))
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(MessageHandler(filters.CONTACT, handle_contact))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
