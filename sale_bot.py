@@ -14,9 +14,6 @@ __last_updated__ = "2025-01-27"
 from config.settings import *
 from config.database import *
 from utils.validators import InputValidator
-# Rate limiting temporarily removed to avoid issues
-# from utils.rate_limiter import RateLimiter, user_action_store
-import time
 
 # Import Telegram libraries
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
@@ -85,12 +82,11 @@ def format_cart(cart_items):
     total = 0
     for idx, item in enumerate(cart_items, 1):
         product_name = item.get('product_name') or f"محصول {item['product_id']}"
-        product_id = item.get('product_id', 'نامشخص')
         price = item.get('price') or 0
         quantity = item['quantity']
         subtotal = price * quantity
         total += subtotal
-        text += f"**{idx}- {product_name}**\n**شناسه محصول: {product_id}**\n\n**{quantity} x {price:,.0f} = {subtotal:,.0f}**\n➖➖➖➖➖➖➖\n"
+        text += f"**{idx}- {product_name}**\n\n**{quantity} x {price:,.0f} = {subtotal:,.0f}**\n➖➖➖➖➖➖➖\n"
     text += f"\n**💰 مجموع: {total:,.0f} تومان**"
     return text
 
@@ -394,7 +390,6 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # Try to add to cart
     if add_to_cart(user_id, product_info['product_id'], clean_quantity):
         context.user_data['awaiting_quantity'] = False
         cart_items = get_user_cart(user_id)
@@ -527,8 +522,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("**❌ لغو شد.**", parse_mode='Markdown')
         await query.message.reply_text("**📱 بازگشت به کانال:**", reply_markup=create_channel_button(), parse_mode='Markdown')
     elif query.data == "finish_order":
-        logger.info(f"User {user_id} attempting to finish order")
-        
         user_info = get_user_info(user_id)
         if user_info and user_info.get('phone_number'):
             cart_items = get_user_cart(user_id)
@@ -624,8 +617,17 @@ async def handle_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clean_name = InputValidator.sanitize_text(name)
     
     user_id = update.effective_user.id
-    # Update user name in database using the proper function
-    if not update_user_name(user_id, clean_name):
+    # Update user name in database
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE users SET first_name = %s WHERE user_id = %s",
+                    (clean_name, user_id)
+                )
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Error updating name: {e}")
         await update.message.reply_text("**❌ خطا در ذخیره نام. لطفاً دوباره تلاش کنید.**", parse_mode='Markdown')
         return
     
@@ -807,17 +809,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         phone = text.strip()
         phone = convert_persian_to_english(phone)
         
-        # Sanitize phone input first
-        phone = InputValidator.sanitize_text(phone)
-        
         # Validate phone input
-        is_valid, result = InputValidator.validate_phone(phone)
+        is_valid, error_msg, clean_phone = InputValidator.validate_phone(phone)
         if not is_valid:
-            await update.message.reply_text(f"**❌ {result}**", parse_mode='Markdown')
+            await update.message.reply_text(f"**❌ {error_msg}**", parse_mode='Markdown')
             return
-        
-        # Get cleaned phone number from result
-        clean_phone = result
         
         user_id = update.effective_user.id
         update_user_phone(user_id, clean_phone)
@@ -911,18 +907,11 @@ async def version_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(version_info, parse_mode='Markdown')
 
 def main():
-    """Main entry point - Supports both webhook and polling modes"""
+    """Main entry point"""
     logger.info("Starting bot...")
     application = Application.builder().token(BOT_TOKEN).build()
     from telegram import BotCommand
     commands = [BotCommand("start", "شروع و منوی اصلی"), BotCommand("version", "نسخه ربات")]
-    
-    # Note: Bot works everywhere. Order notifications are sent via send_message to ADMIN_ID group.
-    # If you want to restrict bot to private chats only, uncomment the filters below:
-    # private_filter = filters.ChatType.PRIVATE
-    # application.add_handler(CommandHandler("start", start, filters=private_filter))
-    # ... (and add filter to other handlers)
-    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("version", version_command))
     application.add_handler(CallbackQueryHandler(button_callback))
@@ -933,23 +922,7 @@ def main():
     asyncio.set_event_loop(loop)
     loop.run_until_complete(application.bot.set_my_commands(commands))
     logger.info("Bot started!")
-    
-    # Try to use webhook if configured, otherwise fallback to polling
-    try:
-        from config.settings import WEBHOOK_URL, WEBHOOK_PORT
-        if WEBHOOK_URL and WEBHOOK_URL != '':
-            logger.info(f"Configuring webhook to {WEBHOOK_URL}")
-            webhook_path = f"/webhook/{BOT_TOKEN}"
-            # For now, keep using polling as webhook requires additional setup
-            # You can switch to webhook later when ready
-            logger.info("Using polling mode (webhook setup requires additional configuration)")
-            application.run_polling()
-        else:
-            application.run_polling()
-    except Exception as e:
-        logger.error(f"Error setting up webhook: {e}")
-        logger.info("Falling back to polling mode")
-        application.run_polling()
+    application.run_polling()
 
 if __name__ == '__main__':
     try:
