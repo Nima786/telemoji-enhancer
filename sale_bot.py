@@ -14,6 +14,9 @@ __last_updated__ = "2025-01-27"
 from config.settings import *
 from config.database import *
 from utils.validators import InputValidator
+# Rate limiting temporarily removed to avoid issues
+# from utils.rate_limiter import RateLimiter, user_action_store
+import time
 
 # Import Telegram libraries
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
@@ -22,6 +25,15 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 # Import WooCommerce function
 import requests
 from requests.auth import HTTPBasicAuth
+
+# Import Persian date library
+try:
+    import jdatetime
+    PERSIAN_DATE_AVAILABLE = True
+except ImportError:
+    PERSIAN_DATE_AVAILABLE = False
+    logger.warning("jdatetime library not installed. Install with: pip install jdatetime")
+    from datetime import datetime as fallback_datetime
 
 logger.info(f"Starting Hom Plast Sales Bot v{__version__}")
 
@@ -33,12 +45,61 @@ def convert_persian_to_english(text):
     translation_table = str.maketrans(persian_digits + arabic_digits, english_digits * 2)
     return text.translate(translation_table)
 
+def format_persian_date(dt):
+    """Convert Gregorian date to Persian (Jalali) date string"""
+    if not PERSIAN_DATE_AVAILABLE:
+        # Fallback to Gregorian if jdatetime is not available
+        return dt.strftime('%Y/%m/%d')
+    
+    try:
+        # Import datetime if needed
+        from datetime import datetime
+        
+        # Convert datetime to Persian date
+        if isinstance(dt, str):
+            # If it's a string, try multiple formats to parse it
+            try:
+                dt = datetime.strptime(dt, '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                try:
+                    dt = datetime.strptime(dt, '%Y-%m-%d')
+                except ValueError:
+                    logger.error(f"Could not parse date string: {dt}")
+                    return str(dt)
+        elif hasattr(dt, 'strftime'):
+            # Already a datetime object, use it
+            pass
+        else:
+            logger.error(f"Invalid date format: {type(dt)}")
+            return str(dt)
+        
+        persian_date = jdatetime.datetime.fromgregorian(datetime=dt)
+        # Format as YYYY/MM/DD
+        return persian_date.strftime('%Y/%m/%d')
+    except Exception as e:
+        logger.error(f"Error converting date to Persian: {e}")
+        # Fallback to Gregorian on error
+        if hasattr(dt, 'strftime'):
+            return dt.strftime('%Y/%m/%d')
+        else:
+            return str(dt)
+
+def create_back_to_post_button(context):
+    """Helper function to create back to post button"""
+    if context.user_data.get('source_message_id') and context.user_data.get('source_channel'):
+        msg_id = context.user_data['source_message_id']
+        channel = context.user_data['source_channel']
+        return InlineKeyboardButton("🛒 ادامه خرید", url=f"https://t.me/{channel}/{msg_id}")
+    else:
+        # Fallback: direct link to channel when no specific post
+        return InlineKeyboardButton("🛒 ادامه خرید", url="https://t.me/hom_plast")
+
 def fetch_product_from_woocommerce(sku: str):
     """Fetch product from WooCommerce API"""
     try:
         url = f"{WC_URL}/wp-json/wc/v3/products"
         auth = HTTPBasicAuth(WC_CONSUMER_KEY, WC_CONSUMER_SECRET)
-        response = requests.get(url, params={'sku': sku}, auth=auth, timeout=10)
+        response = requests.get(url, params={'sku': sku}, auth=auth, timeout=5)
 
         if response.status_code == 200:
             products = response.json()
@@ -77,29 +138,26 @@ def fetch_product_from_woocommerce(sku: str):
 def format_cart(cart_items):
     """Format cart items for display"""
     if not cart_items:
-        return "**🛒 سبد خرید خالی است.**"
+        return "🛒 سبد خرید خالی است."
     text = ""
     total = 0
     for idx, item in enumerate(cart_items, 1):
         product_name = item.get('product_name') or f"محصول {item['product_id']}"
+        product_id = item.get('product_id', 'نامشخص')
         price = item.get('price') or 0
         quantity = item['quantity']
         subtotal = price * quantity
         total += subtotal
-        text += f"**{idx}- {product_name}**\n\n**{quantity} x {price:,.0f} = {subtotal:,.0f}**\n➖➖➖➖➖➖➖\n"
-    text += f"\n**💰 مجموع: {total:,.0f} تومان**"
+        # Use single asterisk for bold (works with Persian text)
+        text += f"*{idx}- {product_name}*\nشناسه محصول: {product_id}\n{quantity} x {price:,.0f} = {subtotal:,.0f}\n➖➖➖➖➖➖➖\n\n"
+    
+    # Use single asterisk for bold total line
+    text += f"💰 *مجموع: {total:,.0f} تومان*"
     return text
 
 def create_cart_keyboard(context):
     """Helper function to create cart keyboard with dynamic back button"""
-    if context.user_data.get('source_message_id') and context.user_data.get('source_channel'):
-        msg_id = context.user_data['source_message_id']
-        channel = context.user_data['source_channel']
-        back_button = InlineKeyboardButton("🔙 بازگشت به پست", url=f"https://t.me/{channel}/{msg_id}")
-    else:
-        # Fallback: direct link to channel when no specific post
-        back_button = InlineKeyboardButton("📱 رفتن به کانال", url="https://t.me/hom_plast")
-
+    back_button = create_back_to_post_button(context)
     keyboard = [
         [back_button, InlineKeyboardButton("✏️ ویرایش سبد خرید", callback_data="edit_cart")],
         [InlineKeyboardButton("✅ تکمیل سفارش", callback_data="finish_order"), InlineKeyboardButton("❌ لغو سبد خرید", callback_data="cancel_order")]
@@ -168,41 +226,105 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"**❌ {error_msg}**", parse_mode='Markdown')
                 return
 
-            await update.message.reply_text("**⏳ لطفاً صبر کنید...**", parse_mode='Markdown')
-            product_info = fetch_product_from_woocommerce(clean_sku)
+            loading_msg = await update.message.reply_text("**⏳ لطفاً صبر کنید...**", parse_mode='Markdown')
+            
+            try:
+                # Try to fetch product from WooCommerce
+                try:
+                    product_info = fetch_product_from_woocommerce(clean_sku)
+                except requests.exceptions.Timeout:
+                    raise TimeoutError("WooCommerce API timeout")
+                except Exception as e:
+                    logger.error(f"Error fetching product {clean_sku} from WooCommerce: {e}")
+                    raise
 
-            if product_info:
-                if not product_info.get('in_stock', False):
+                # Delete loading message after fetch (whether success or failure)
+                try:
+                    await loading_msg.delete()
+                except:
+                    pass
+
+                # Process product info
+                if product_info:
+                    if not product_info.get('in_stock', False):
+                        back_button = create_back_to_post_button(context)
+                        keyboard = InlineKeyboardMarkup([[back_button]])
+                        await update.message.reply_text(
+                            f"**❌ متاسفانه این محصول به اتمام رسیده است**\n\n"
+                            f"**📦 {product_info['name']}**\n\n"
+                            f"لطفاً بعداً دوباره تلاش کنید یا با پشتیبانی تماس بگیرید.",
+                            reply_markup=keyboard,
+                            parse_mode='Markdown'
+                        )
+                    else:
+                        # Try to save product to database
+                        try:
+                            save_product_to_db(product_info)
+                        except Exception as e:
+                            logger.error(f"Error saving product to database: {e}")
+                            # Continue anyway - database save failure shouldn't block user
+
+                        context.user_data['current_product'] = product_info
+                        context.user_data['awaiting_quantity'] = True
+
+                        stock_msg = ""
+                        if product_info.get('manage_stock') and product_info.get('stock_quantity'):
+                            stock_qty = product_info['stock_quantity']
+                            if stock_qty < 50:
+                                stock_msg = f"\n**⚠️ فقط {stock_qty} عدد موجود است**"
+
+                        message = (
+                            f"*✅ محصول مورد نظر انتخاب شد!*\n\n"
+                            f"*📦 {product_info['name']}*\n"
+                            f"*🆔 شناسه محصول:* {product_info['product_id']}\n"
+                            f"*💰 قیمت:* {product_info['price']:,.0f} تومان\n"
+                            f"*📊 حداقل:* {product_info['min_quantity']} عدد"
+                            f"{stock_msg}\n\n*❓ لطفاً تعداد مور نظر را در قسمت پیام وارد کنید!*"
+                        )
+
+                        # Use inline buttons instead of keyboard buttons for cancel
+                        cancel_button = InlineKeyboardButton("❌ انصراف", callback_data="cancel_product_add")
+                        keyboard = InlineKeyboardMarkup([[cancel_button]])
+                        await update.message.reply_text(message, reply_markup=keyboard, parse_mode='Markdown')
+                else:
+                    back_button = create_back_to_post_button(context)
+                    keyboard = InlineKeyboardMarkup([[back_button]])
                     await update.message.reply_text(
-                        f"**❌ متاسفانه این محصول به اتمام رسیده است**\n\n"
-                        f"**📦 {product_info['name']}**\n\n"
-                        f"لطفاً بعداً دوباره تلاش کنید یا با پشتیبانی تماس بگیرید.",
+                        "**❌ محصول پیدا نشد.**\n\n"
+                        "لطفاً مطمئن شوید که کد محصول صحیح است.",
+                        reply_markup=keyboard,
                         parse_mode='Markdown'
                     )
-                else:
-                    save_product_to_db(product_info)
-                    context.user_data['current_product'] = product_info
-                    context.user_data['awaiting_quantity'] = True
-
-                    stock_msg = ""
-                    if product_info.get('manage_stock') and product_info.get('stock_quantity'):
-                        stock_qty = product_info['stock_quantity']
-                        if stock_qty < 50:
-                            stock_msg = f"\n**⚠️ فقط {stock_qty} عدد موجود است**"
-
-                    message = (
-                        f"**✅ محصول پیدا شد!**\n\n"
-                        f"**📦 {product_info['name']}**\n"
-                        f"**💰 قیمت:** {product_info['price']:,.0f} تومان\n"
-                        f"**📊 حداقل:** {product_info['min_quantity']} عدد"
-                        f"{stock_msg}\n\n**❓ تعداد را وارد کنید:**"
-                    )
-
-                    keyboard = [[KeyboardButton("🔙 بازگشت به منو"), KeyboardButton("❌ انصراف")]]
-                    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-                    await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='Markdown')
-            else:
-                await update.message.reply_text("**❌ محصول پیدا نشد.**", parse_mode='Markdown')
+                    
+            except TimeoutError:
+                # Handle timeout specifically
+                try:
+                    await loading_msg.delete()
+                except:
+                    pass
+                back_button = create_back_to_post_button(context)
+                keyboard = InlineKeyboardMarkup([[back_button]])
+                await update.message.reply_text(
+                    "**⏰ زمان اتصال به سرور به پایان رسید.**\n\n"
+                    "لطفاً دوباره تلاش کنید یا با پشتیبانی تماس بگیرید.",
+                    reply_markup=keyboard,
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                # Handle any other error (database, message sending, etc.)
+                logger.error(f"Unexpected error processing product {clean_sku}: {e}", exc_info=True)
+                try:
+                    await loading_msg.delete()
+                except:
+                    pass
+                back_button = create_back_to_post_button(context)
+                keyboard = InlineKeyboardMarkup([[back_button]])
+                await update.message.reply_text(
+                    "**❌ خطایی رخ داد.**\n\n"
+                    "لطفاً دوباره تلاش کنید یا با پشتیبانی تماس بگیرید.",
+                    reply_markup=keyboard,
+                    parse_mode='Markdown'
+                )
             return
 
     reply_markup = create_main_menu_keyboard()
@@ -223,9 +345,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quantity input with validation"""
-    if context.user_data.get('awaiting_new_quantity'):
-        text = update.message.text.strip()
+    if not update.message or not update.message.text:
+        return
         
+    text = update.message.text.strip()
+    
+    if context.user_data.get('awaiting_new_quantity'):
         # Validate quantity input
         is_valid, error_msg, clean_quantity = InputValidator.validate_quantity(text)
         if not is_valid:
@@ -236,9 +361,15 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
 
         # Get product info from WooCommerce to check stock
-        product_info = fetch_product_from_woocommerce(product_id)
-        if not product_info:
+        try:
+            product_info = fetch_product_from_woocommerce(product_id)
+        except Exception as e:
+            logger.error(f"Error fetching product {product_id} for quantity update: {e}")
             await update.message.reply_text("**❌ خطا در دریافت اطلاعات محصول.**", parse_mode='Markdown')
+            return
+        
+        if not product_info:
+            await update.message.reply_text("**❌ محصول پیدا نشد.**", parse_mode='Markdown')
             return
 
         # Calculate minimum based on price
@@ -308,7 +439,7 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = create_cart_keyboard(context)
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
-                f"**✅ تعداد بروز شد!**\n\n{cart_text}",
+                f"*✅ تعداد بروز شد!*\n\n{cart_text}",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
@@ -316,8 +447,6 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.user_data.get('awaiting_quantity'):
         return
-
-    text = update.message.text.strip()
     
     # Validate quantity input
     is_valid, error_msg, clean_quantity = InputValidator.validate_quantity(text)
@@ -390,6 +519,7 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+    # Try to add to cart
     if add_to_cart(user_id, product_info['product_id'], clean_quantity):
         context.user_data['awaiting_quantity'] = False
         cart_items = get_user_cart(user_id)
@@ -398,7 +528,7 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = create_cart_keyboard(context)
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            f"**✅ اضافه شد!**\n\n{cart_text}",
+            f"*✅ اضافه شد!*\n\n{cart_text}",
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
@@ -506,24 +636,59 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cart_text = format_cart(cart_items)
             keyboard = create_cart_keyboard(context)
             await query.edit_message_text(
-                f"**✅ حذف شد!**\n\n{cart_text}",
+                f"*✅ حذف شد!*\n\n{cart_text}",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
         else:
-            await query.edit_message_text("**🛒 سبد خالی شد.**", parse_mode='Markdown')
+            # Cart is now empty → clear inline keyboard and show menus
+            try:
+                await query.edit_message_text("*🛒 سبد خالی شد.*", reply_markup=None, parse_mode='Markdown')
+            except Exception:
+                pass
+            await query.message.reply_text("*📱 بازگشت به کانال:*", reply_markup=create_channel_button(), parse_mode='Markdown')
+            reply_markup = create_main_menu_keyboard()
+            await query.message.reply_text("*منوی اصلی:*", reply_markup=reply_markup, parse_mode='Markdown')
     elif query.data == "back_to_cart":
         cart_items = get_user_cart(user_id)
-        cart_text = format_cart(cart_items)
-        keyboard = create_cart_keyboard(context)
-        await query.edit_message_text(cart_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        if not cart_items:
+            # Cart is empty: clear inline keyboard and restore menus
+            try:
+                await query.edit_message_text("*🛒 سبد خالی شد.*", reply_markup=None, parse_mode='Markdown')
+            except Exception:
+                pass
+            await query.message.reply_text("*📱 بازگشت به کانال:*", reply_markup=create_channel_button(), parse_mode='Markdown')
+            reply_markup = create_main_menu_keyboard()
+            await query.message.reply_text("*منوی اصلی:*", reply_markup=reply_markup, parse_mode='Markdown')
+        else:
+            cart_text = format_cart(cart_items)
+            keyboard = create_cart_keyboard(context)
+            await query.edit_message_text(cart_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    elif query.data == "cancel_product_add":
+        # Cancel product addition - same pattern as cart cancellation
+        context.user_data.clear()  # Clear all pending states including awaiting_quantity
+        await query.edit_message_text("*❌ افزودن محصول لغو شد.*", reply_markup=None, parse_mode='Markdown')
+        await query.message.reply_text("*📱 بازگشت به کانال:*", reply_markup=create_channel_button(), parse_mode='Markdown')
+        # Restore main menu
+        reply_markup = create_main_menu_keyboard()
+        await query.message.reply_text("*منوی اصلی:*", reply_markup=reply_markup, parse_mode='Markdown')
     elif query.data == "cancel_order":
         clear_user_cart(user_id)
-        await query.edit_message_text("**❌ لغو شد.**", parse_mode='Markdown')
-        await query.message.reply_text("**📱 بازگشت به کانال:**", reply_markup=create_channel_button(), parse_mode='Markdown')
+        context.user_data.clear()  # Clear any pending states
+        # Clear any inline keyboard on the cart message
+        try:
+            await query.edit_message_text("*❌ سبد خرید لغو شد.*", reply_markup=None, parse_mode='Markdown')
+        except Exception:
+            pass
+        await query.message.reply_text("*📱 بازگشت به کانال:*", reply_markup=create_channel_button(), parse_mode='Markdown')
+        # Restore main menu
+        reply_markup = create_main_menu_keyboard()
+        await query.message.reply_text("*منوی اصلی:*", reply_markup=reply_markup, parse_mode='Markdown')
     elif query.data == "finish_order":
+        logger.info(f"User {user_id} attempting to finish order")
+        
         user_info = get_user_info(user_id)
-        if user_info and user_info.get('phone_number'):
+        if user_info and user_info.get('phone_number') and user_info.get('first_name'):
             cart_items = get_user_cart(user_id)
             if not cart_items:
                 await query.edit_message_text("**❌ سبد خالی!**", parse_mode='Markdown')
@@ -559,8 +724,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 promo_markup = InlineKeyboardMarkup(promo_keyboard)
                 promo_message = (
                     f"😍 می‌دونستی اگه این سفارش رو از طریق وبسایت ما انجام می‌دادی، "
-                    f"دو درصد تخفیف ویژه می‌گرفتی و بجای {int(total_amount):,} فقط "
-                    f"{discounted_amount:,} تومان پرداخت میکردی !!!"
+                    f"دو درصد تخفیف ویژه می‌گرفتی و بجای *{int(total_amount):,}* فقط "
+                    f"*{discounted_amount:,}* تومان پرداخت می‌کردی!!!"
                 )
                 try:
                     await query.message.reply_text(
@@ -579,7 +744,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 main_menu = create_main_menu_keyboard()
                 await context.bot.send_message(
                     chat_id=user_id,
-                    text="**✅ سفارش شما ثبت شد!**\n\n**برای سفارش جدید، به کانال مراجعه کنید.**",
+                    text=f"✅  سفارش شما به شماره *{order_id:04d}* ثبت شد!\n\n"
+                         f"📞 به زودی با شما تماس گرفته خواهد شد.\n\n"
+                         f"برای سفارش جدید، به کانال مراجعه کنید",
                     reply_markup=main_menu,
                     parse_mode='Markdown'
                 )
@@ -597,8 +764,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logger.error(f"Error: {e}")
         else:
-            await query.edit_message_text("**✅ لطفاً نام کامل خود را وارد کنید:**", parse_mode='Markdown')
-            context.user_data['awaiting_name'] = True
+            # Check if user has name but not phone, or missing both
+            user_info = get_user_info(user_id)
+            if user_info and user_info.get('first_name') and not user_info.get('phone_number'):
+                await query.edit_message_text("**📱 لطفاً شماره تماس خود را وارد کنید:**", parse_mode='Markdown')
+                context.user_data['awaiting_phone'] = True
+            else:
+                await query.edit_message_text("**✍️ لطفاً ابتدا ثبت نام کنید:**", parse_mode='Markdown')
+                context.user_data['awaiting_name'] = True
 
 async def handle_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle name input with validation"""
@@ -617,17 +790,8 @@ async def handle_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clean_name = InputValidator.sanitize_text(name)
     
     user_id = update.effective_user.id
-    # Update user name in database
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    "UPDATE users SET first_name = %s WHERE user_id = %s",
-                    (clean_name, user_id)
-                )
-            conn.commit()
-    except Exception as e:
-        logger.error(f"Error updating name: {e}")
+    # Update user name in database using the proper function
+    if not update_user_name(user_id, clean_name):
         await update.message.reply_text("**❌ خطا در ذخیره نام. لطفاً دوباره تلاش کنید.**", parse_mode='Markdown')
         return
     
@@ -660,9 +824,11 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "**🛒 سفارشات شما:**\n\n"
     for order in orders:
         emoji = {'pending': '⏳', 'confirmed': '✅', 'cancelled': '❌', 'completed': '✅'}.get(order['status'], '📦')
+        # Convert date to Persian calendar
+        persian_date = format_persian_date(order['created_at'])
         text += (
             f"{emoji} **#{order['order_id']:04d}**\n"
-            f"{order['created_at'].strftime('%Y/%m/%d')}\n"
+            f"{persian_date}\n"
             f"{order['total_amount']:,.0f} تومان - {order['item_count']} محصول\n"
             f"➖➖➖➖➖\n\n"
         )
@@ -682,6 +848,26 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("**✅ شماره شما بروز شد!**", reply_markup=reply_markup, parse_mode='Markdown')
             return
         if context.user_data.get('registering'):
+            # Send admin notification for new user registration
+            user_info = get_user_info(user_id)
+            user_name = user_info.get('first_name', 'نامشخص') if user_info else 'نامشخص'
+            username = update.effective_user.username or 'نامشخص'
+            first_name_user = update.effective_user.first_name or 'نامشخص'
+            last_name_user = update.effective_user.last_name or ''
+            
+            admin_registration_msg = (
+                f"**👤 کاربر جدید ثبت نام کرد!**\n\n"
+                f"**🆔 شناسه:** {user_id}\n"
+                f"**👤 نام:** {user_name}\n"
+                f"**📱 شماره:** {phone}\n"
+                f"**@username:** @{username}\n"
+                f"**نام تلگرام:** {first_name_user} {last_name_user}"
+            )
+            try:
+                await context.bot.send_message(chat_id=ADMIN_ID, text=admin_registration_msg, parse_mode='Markdown')
+            except Exception as e:
+                logger.error(f"Error sending registration notification: {e}")
+            
             context.user_data.clear()
             reply_markup = create_main_menu_keyboard()
             await update.message.reply_text(
@@ -756,14 +942,21 @@ async def register_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle text messages"""
-    text = update.message.text
+    if not update.message or not update.message.text:
+        return
+        
+    text = update.message.text.strip()
 
-    if text == "🔙 بازگشت به منو" or text == "❌ انصراف":
+    # Handle cancel/return actions (useful for registration/other states, not product addition which uses inline buttons)
+    if text == "🔙 بازگشت به منو" or text == "❌ انصراف" or "انصراف" in text or "بازگشت به منو" in text:
         context.user_data.clear()
-        reply_markup = create_main_menu_keyboard()
-        cancel_msg = "**✅ بازگشت به منوی اصلی**" if text == "🔙 بازگشت به منو" else "**✅ عملیات لغو شد**"
-        await update.message.reply_text(cancel_msg, reply_markup=reply_markup, parse_mode='Markdown')
+        from telegram import ReplyKeyboardRemove
+        remove_keyboard = ReplyKeyboardRemove(remove_keyboard=True)
+        cancel_msg = "**✅ بازگشت به منوی اصلی**" if "بازگشت" in text else "**✅ عملیات لغو شد**"
+        await update.message.reply_text(cancel_msg, reply_markup=remove_keyboard, parse_mode='Markdown')
         await update.message.reply_text("**📱 بازگشت به کانال:**", reply_markup=create_channel_button(), parse_mode='Markdown')
+        reply_markup = create_main_menu_keyboard()
+        await update.message.reply_text("**منوی اصلی:**", reply_markup=reply_markup, parse_mode='Markdown')
         return
 
     if text == "🔙 بازگشت به سبد":
@@ -809,11 +1002,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         phone = text.strip()
         phone = convert_persian_to_english(phone)
         
+        # Sanitize phone input first
+        phone = InputValidator.sanitize_text(phone)
+        
         # Validate phone input
-        is_valid, error_msg, clean_phone = InputValidator.validate_phone(phone)
+        is_valid, result = InputValidator.validate_phone(phone)
         if not is_valid:
-            await update.message.reply_text(f"**❌ {error_msg}**", parse_mode='Markdown')
+            await update.message.reply_text(f"**❌ {result}**", parse_mode='Markdown')
             return
+        
+        # Get cleaned phone number from result
+        clean_phone = result
         
         user_id = update.effective_user.id
         update_user_phone(user_id, clean_phone)
@@ -823,6 +1022,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("**✅ شماره شما بروز شد!**", reply_markup=reply_markup, parse_mode='Markdown')
             return
         if context.user_data.get('registering'):
+            # Send admin notification for new user registration
+            user_info = get_user_info(user_id)
+            user_name = user_info.get('first_name', 'نامشخص') if user_info else 'نامشخص'
+            username = update.effective_user.username or 'نامشخص'
+            first_name_user = update.effective_user.first_name or 'نامشخص'
+            last_name_user = update.effective_user.last_name or ''
+            
+            admin_registration_msg = (
+                f"**👤 کاربر جدید ثبت نام کرد!**\n\n"
+                f"**🆔 شناسه:** {user_id}\n"
+                f"**👤 نام:** {user_name}\n"
+                f"**📱 شماره:** {clean_phone}\n"
+                f"**@username:** @{username}\n"
+                f"**نام تلگرام:** {first_name_user} {last_name_user}"
+            )
+            try:
+                await context.bot.send_message(chat_id=ADMIN_ID, text=admin_registration_msg, parse_mode='Markdown')
+            except Exception as e:
+                logger.error(f"Error sending registration notification: {e}")
+            
             context.user_data.clear()
             reply_markup = create_main_menu_keyboard()
             await update.message.reply_text(
@@ -907,11 +1126,18 @@ async def version_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(version_info, parse_mode='Markdown')
 
 def main():
-    """Main entry point"""
+    """Main entry point - Supports both webhook and polling modes"""
     logger.info("Starting bot...")
     application = Application.builder().token(BOT_TOKEN).build()
     from telegram import BotCommand
     commands = [BotCommand("start", "شروع و منوی اصلی"), BotCommand("version", "نسخه ربات")]
+    
+    # Note: Bot works everywhere. Order notifications are sent via send_message to ADMIN_ID group.
+    # If you want to restrict bot to private chats only, uncomment the filters below:
+    # private_filter = filters.ChatType.PRIVATE
+    # application.add_handler(CommandHandler("start", start, filters=private_filter))
+    # ... (and add filter to other handlers)
+    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("version", version_command))
     application.add_handler(CallbackQueryHandler(button_callback))
@@ -922,7 +1148,23 @@ def main():
     asyncio.set_event_loop(loop)
     loop.run_until_complete(application.bot.set_my_commands(commands))
     logger.info("Bot started!")
-    application.run_polling()
+    
+    # Try to use webhook if configured, otherwise fallback to polling
+    try:
+        from config.settings import WEBHOOK_URL, WEBHOOK_PORT
+        if WEBHOOK_URL and WEBHOOK_URL != '':
+            logger.info(f"Configuring webhook to {WEBHOOK_URL}")
+            webhook_path = f"/webhook/{BOT_TOKEN}"
+            # For now, keep using polling as webhook requires additional setup
+            # You can switch to webhook later when ready
+            logger.info("Using polling mode (webhook setup requires additional configuration)")
+            application.run_polling()
+        else:
+            application.run_polling()
+    except Exception as e:
+        logger.error(f"Error setting up webhook: {e}")
+        logger.info("Falling back to polling mode")
+        application.run_polling()
 
 if __name__ == '__main__':
     try:
