@@ -19,7 +19,7 @@ from utils.validators import InputValidator
 import time
 
 # Import Telegram libraries
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 # Import WooCommerce function
@@ -120,7 +120,14 @@ def fetch_product_from_woocommerce(sku: str):
                 else:
                     min_quantity = 1
 
-                logger.info(f"Product: {name}, Price: {price}, Min: {min_quantity}, Stock: {stock_status}, Qty: {stock_quantity}")
+                # Get product images
+                images = []
+                if product.get('images'):
+                    for img in product.get('images', []):
+                        if img.get('src'):
+                            images.append(img.get('src'))
+                
+                logger.info(f"Product: {name}, Price: {price}, Min: {min_quantity}, Stock: {stock_status}, Qty: {stock_quantity}, Images: {len(images)}")
                 return {
                     'product_id': sku,
                     'name': name,
@@ -128,7 +135,8 @@ def fetch_product_from_woocommerce(sku: str):
                     'min_quantity': min_quantity,
                     'in_stock': in_stock,
                     'stock_quantity': stock_quantity,
-                    'manage_stock': manage_stock
+                    'manage_stock': manage_stock,
+                    'images': images  # List of image URLs
                 }
         return None
     except Exception as e:
@@ -177,6 +185,148 @@ def create_channel_button():
     keyboard = [[InlineKeyboardButton("📱 بازگشت به کانال", url="https://t.me/hom_plast")]]
     return InlineKeyboardMarkup(keyboard)
 
+def calculate_effective_quantity_limits(product_info, user_id, exclude_product_id=None):
+    """
+    Calculate effective min and max quantities based on product info and cart.
+    Returns: (effective_min, effective_max, remaining_stock, current_cart_qty)
+    """
+    try:
+        # Calculate original minimum based on price
+        product_price = float(product_info.get('price', 0))
+        if product_price <= 30000:
+            original_min = 12
+        elif 30000 < product_price <= 100000:
+            original_min = 6
+        else:
+            original_min = 1
+        
+        # Get current quantity in cart for this product
+        current_cart_qty = 0
+        cart_items = get_user_cart(user_id)
+        other_cart_qty = 0
+        
+        if cart_items:
+            for item in cart_items:
+                if item and isinstance(item, dict):
+                    item_product_id = str(item.get('product_id', ''))
+                    product_id = str(product_info.get('product_id', ''))
+                    if item_product_id == product_id:
+                        # Skip the item being edited if exclude_product_id is provided
+                        if exclude_product_id and item_product_id == str(exclude_product_id):
+                            continue  # Skip the item being edited
+                        current_cart_qty = item.get('quantity', 0)
+                        other_cart_qty += item.get('quantity', 0)
+        
+        # Calculate effective min and max based on stock
+        if product_info.get('manage_stock') and product_info.get('stock_quantity'):
+            available_stock = int(product_info.get('stock_quantity', 0))
+            remaining_stock = available_stock - other_cart_qty
+            
+            # Dynamic minimum: If remaining stock < original minimum, adjust to 1
+            if remaining_stock < original_min:
+                effective_min = 1
+            else:
+                effective_min = original_min
+            
+            # Maximum is remaining stock
+            effective_max = max(1, remaining_stock)  # At least 1 if stock available
+            
+            return effective_min, effective_max, remaining_stock, current_cart_qty
+        else:
+            # No stock management - just use original minimum
+            effective_min = original_min
+            effective_max = 999999  # No limit
+            return effective_min, effective_max, None, current_cart_qty
+    except Exception as e:
+        logger.error(f"Error calculating effective quantity limits: {e}", exc_info=True)
+        # Return safe defaults
+        return 1, 999999, None, 0
+
+def create_quantity_keyboard(product_id, current_quantity, effective_min, effective_max, image_index=0, total_images=0):
+    """Create inline keyboard with quantity buttons and optional image gallery navigation"""
+    # Ensure product_id is a string
+    product_id = str(product_id) if product_id else ""
+    
+    # Ensure current_quantity is an integer
+    current_quantity = int(current_quantity) if current_quantity else 1
+    effective_min = int(effective_min) if effective_min else 1
+    effective_max = int(effective_max) if effective_max else 999999
+    
+    # Disable decrease button if at minimum
+    decrease_disabled = current_quantity <= effective_min
+    # Disable increase button if at maximum
+    increase_disabled = current_quantity >= effective_max
+    
+    keyboard = []
+    
+    # Add image gallery navigation if multiple images exist
+    if total_images > 1:
+        prev_disabled = image_index <= 0
+        next_disabled = image_index >= total_images - 1
+        gallery_row = []
+        if not prev_disabled:
+            gallery_row.append(InlineKeyboardButton("◀️", callback_data=f"img_prev_{product_id}_{image_index}"))
+        gallery_row.append(InlineKeyboardButton(f"🖼️ {image_index + 1}/{total_images}", callback_data="img_info"))
+        if not next_disabled:
+            gallery_row.append(InlineKeyboardButton("▶️", callback_data=f"img_next_{product_id}_{image_index}"))
+        if gallery_row:
+            keyboard.append(gallery_row)
+    
+    # Quantity buttons
+    keyboard.append([
+        InlineKeyboardButton(
+            "➖",
+            callback_data=f"qty_dec_{product_id}" if not decrease_disabled else "qty_min_reached"
+        ),
+        InlineKeyboardButton(
+            str(current_quantity),
+            callback_data="qty_display"
+        ),
+        InlineKeyboardButton(
+            "➕",
+            callback_data=f"qty_inc_{product_id}" if not increase_disabled else "qty_max_reached"
+        )
+    ])
+    
+    # Action buttons
+    keyboard.append([
+        InlineKeyboardButton("🛒 افزودن به سبد", callback_data=f"qty_add_cart_{product_id}")
+    ])
+    
+    keyboard.append([
+        InlineKeyboardButton("⌨️ تایپ تعداد", callback_data=f"qty_type_{product_id}"),
+        InlineKeyboardButton("❌ انصراف", callback_data="cancel_product_add")
+    ])
+    
+    return InlineKeyboardMarkup(keyboard)
+
+def format_product_with_quantity(product_info, current_quantity, effective_min, effective_max, remaining_stock=None):
+    """Format product message with current quantity"""
+    try:
+        product_name = product_info.get('name', 'محصول')
+        product_id = product_info.get('product_id', 'نامشخص')
+        product_price = float(product_info.get('price', 0))
+        
+        message = (
+            f"*✅ محصول مورد نظر انتخاب شد!*\n\n"
+            f"*📦 {product_name}*\n"
+            f"*🆔 شناسه محصول:* {product_id}\n"
+            f"*💰 قیمت:* {product_price:,.0f} تومان\n"
+            f"*📊 حداقل:* {effective_min} عدد\n\n"
+            f"*🔢 تعداد انتخاب شده: {current_quantity}*\n\n"
+            f"از دکمه‌های زیر برای تغییر تعداد استفاده کنید یا تعداد را تایپ کنید:"
+        )
+        return message
+    except Exception as e:
+        logger.error(f"Error formatting product message: {e}", exc_info=True)
+        # Return a simple fallback message
+        return (
+            f"*✅ محصول مورد نظر انتخاب شد!*\n\n"
+            f"*📦 {product_info.get('name', 'محصول')}*\n"
+            f"*🔢 تعداد: {current_quantity}*\n\n"
+            f"از دکمه‌های زیر برای تغییر تعداد استفاده کنید:"
+        )
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command with validation"""
     user = update.effective_user
@@ -184,6 +334,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Save user info
     save_user(user.id, user.username, user.first_name, user.last_name)
 
+    # Log for debugging
+    logger.info(f"Start command called with args: {context.args}")
+
+    # If there are arguments (like product selection), process them first
+    # and return early to avoid showing welcome message
     if context.args:
         arg = context.args[0]
 
@@ -223,10 +378,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Validate SKU
             is_valid, error_msg, clean_sku = InputValidator.validate_sku(product_sku)
             if not is_valid:
-                await update.message.reply_text(f"**❌ {error_msg}**", parse_mode='Markdown')
+                await context.bot.send_message(
+                    chat_id=update.effective_user.id,
+                    text=f"**❌ {error_msg}**",
+                    parse_mode='Markdown'
+                )
                 return
 
-            loading_msg = await update.message.reply_text("**⏳ لطفاً صبر کنید...**", parse_mode='Markdown')
+            loading_msg = await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text="**⏳ لطفاً صبر کنید...**",
+                parse_mode='Markdown'
+            )
             
             try:
                 # Try to fetch product from WooCommerce
@@ -249,8 +412,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if not product_info.get('in_stock', False):
                         back_button = create_back_to_post_button(context)
                         keyboard = InlineKeyboardMarkup([[back_button]])
-                        await update.message.reply_text(
-                            f"**❌ متاسفانه این محصول به اتمام رسیده است**\n\n"
+                        await context.bot.send_message(
+                            chat_id=update.effective_user.id,
+                            text=f"**❌ متاسفانه این محصول به اتمام رسیده است**\n\n"
                             f"**📦 {product_info['name']}**\n\n"
                             f"لطفاً بعداً دوباره تلاش کنید یا با پشتیبانی تماس بگیرید.",
                             reply_markup=keyboard,
@@ -266,31 +430,82 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         context.user_data['current_product'] = product_info
                         context.user_data['awaiting_quantity'] = True
+                        
+                        try:
+                            # Calculate effective min/max quantities
+                            user_id = update.effective_user.id
+                            effective_min, effective_max, remaining_stock, current_cart_qty = calculate_effective_quantity_limits(
+                                product_info, user_id
+                            )
+                            
+                            # Initialize quantity to effective minimum (or 1 if dynamic min applies)
+                            initial_quantity = max(effective_min, 1)
+                            context.user_data['current_quantity'] = initial_quantity
+                            context.user_data['effective_min'] = effective_min
+                            context.user_data['effective_max'] = effective_max
 
-                        stock_msg = ""
-                        if product_info.get('manage_stock') and product_info.get('stock_quantity'):
-                            stock_qty = product_info['stock_quantity']
-                            if stock_qty < 50:
-                                stock_msg = f"\n**⚠️ فقط {stock_qty} عدد موجود است**"
+                            # Format product message with quantity
+                            message = format_product_with_quantity(
+                                product_info, initial_quantity, effective_min, effective_max, remaining_stock
+                            )
 
-                        message = (
-                            f"*✅ محصول مورد نظر انتخاب شد!*\n\n"
-                            f"*📦 {product_info['name']}*\n"
-                            f"*🆔 شناسه محصول:* {product_info['product_id']}\n"
-                            f"*💰 قیمت:* {product_info['price']:,.0f} تومان\n"
-                            f"*📊 حداقل:* {product_info['min_quantity']} عدد"
-                            f"{stock_msg}\n\n*❓ لطفاً تعداد مور نظر را در قسمت پیام وارد کنید!*"
-                        )
+                            # Get product images
+                            images = product_info.get('images', [])
+                            context.user_data['product_images'] = images
+                            context.user_data['current_image_index'] = 0
+                            
+                            # Create quantity keyboard with image gallery if multiple images
+                            keyboard = create_quantity_keyboard(
+                                product_info['product_id'], 
+                                initial_quantity, 
+                                effective_min, 
+                                effective_max,
+                                image_index=0,
+                                total_images=len(images)
+                            )
+                            
+                            # Send product with image if available
+                            if images and len(images) > 0:
+                                await context.bot.send_photo(
+                                    chat_id=update.effective_user.id,
+                                    photo=images[0],
+                                    caption=message,
+                                    reply_markup=keyboard,
+                                    parse_mode='Markdown'
+                                )
+                            else:
+                                await context.bot.send_message(
+                                    chat_id=update.effective_user.id,
+                                    text=message,
+                                    reply_markup=keyboard,
+                                    parse_mode='Markdown'
+                                )
+                        except Exception as e:
+                            logger.error(f"Error displaying product with quantity buttons: {e}", exc_info=True)
+                            # Fallback to original text input method
+                            message = (
+                                f"*✅ محصول مورد نظر انتخاب شد!*\n\n"
+                                f"*📦 {product_info['name']}*\n"
+                                f"*🆔 شناسه محصول:* {product_info['product_id']}\n"
+                                f"*💰 قیمت:* {product_info['price']:,.0f} تومان\n"
+                                f"*📊 حداقل:* {product_info['min_quantity']} عدد\n\n"
+                                f"*❓ لطفاً تعداد مورد نظر را در قسمت پیام وارد کنید!*"
+                            )
 
-                        # Use inline buttons instead of keyboard buttons for cancel
-                        cancel_button = InlineKeyboardButton("❌ انصراف", callback_data="cancel_product_add")
-                        keyboard = InlineKeyboardMarkup([[cancel_button]])
-                        await update.message.reply_text(message, reply_markup=keyboard, parse_mode='Markdown')
+                            cancel_button = InlineKeyboardButton("❌ انصراف", callback_data="cancel_product_add")
+                            keyboard = InlineKeyboardMarkup([[cancel_button]])
+                            await context.bot.send_message(
+                                chat_id=update.effective_user.id,
+                                text=message,
+                                reply_markup=keyboard,
+                                parse_mode='Markdown'
+                            )
                 else:
                     back_button = create_back_to_post_button(context)
                     keyboard = InlineKeyboardMarkup([[back_button]])
-                    await update.message.reply_text(
-                        "**❌ محصول پیدا نشد.**\n\n"
+                    await context.bot.send_message(
+                        chat_id=update.effective_user.id,
+                        text="**❌ محصول پیدا نشد.**\n\n"
                         "لطفاً مطمئن شوید که کد محصول صحیح است.",
                         reply_markup=keyboard,
                         parse_mode='Markdown'
@@ -304,8 +519,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
                 back_button = create_back_to_post_button(context)
                 keyboard = InlineKeyboardMarkup([[back_button]])
-                await update.message.reply_text(
-                    "**⏰ زمان اتصال به سرور به پایان رسید.**\n\n"
+                await context.bot.send_message(
+                    chat_id=update.effective_user.id,
+                    text="**⏰ زمان اتصال به سرور به پایان رسید.**\n\n"
                     "لطفاً دوباره تلاش کنید یا با پشتیبانی تماس بگیرید.",
                     reply_markup=keyboard,
                     parse_mode='Markdown'
@@ -319,29 +535,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
                 back_button = create_back_to_post_button(context)
                 keyboard = InlineKeyboardMarkup([[back_button]])
-                await update.message.reply_text(
-                    "**❌ خطایی رخ داد.**\n\n"
+                await context.bot.send_message(
+                    chat_id=update.effective_user.id,
+                    text="**❌ خطایی رخ داد.**\n\n"
                     "لطفاً دوباره تلاش کنید یا با پشتیبانی تماس بگیرید.",
                     reply_markup=keyboard,
                     parse_mode='Markdown'
                 )
             return
 
-    reply_markup = create_main_menu_keyboard()
-    await update.message.reply_text(
-        f"**👋 سلام {user.first_name}!**\n\n"
-        f"**به ربات فروش هوم پلاست خوش آمدید 🛒**\n\n"
-        f"برای سفارش، از کانال دکمه «سفارش محصول» را بزنید.",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
+    # Only show welcome message if no arguments (not a product selection)
+    # This prevents showing welcome message when user clicks product from channel
+    if not context.args:
+        reply_markup = create_main_menu_keyboard()
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=f"**👋 سلام {user.first_name}!**\n\n"
+            f"**به ربات فروش هوم پلاست خوش آمدید 🛒**\n\n"
+            f"برای سفارش، از کانال دکمه «سفارش محصول» را بزنید.",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
 
-    # Always show channel button
-    await update.message.reply_text(
-        "**📱 بازگشت به کانال:**",
-        reply_markup=create_channel_button(),
-        parse_mode='Markdown'
-    )
+        # Always show channel button
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text="**📱 بازگشت به کانال:**",
+            reply_markup=create_channel_button(),
+            parse_mode='Markdown'
+        )
 
 async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quantity input with validation"""
@@ -351,8 +573,8 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     
     if context.user_data.get('awaiting_new_quantity'):
-        # Validate quantity input
-        is_valid, error_msg, clean_quantity = InputValidator.validate_quantity(text)
+        # Validate quantity input (format only, stock check comes later)
+        is_valid, error_msg, clean_quantity = InputValidator.validate_quantity(text, min_qty=1, max_qty=999999)
         if not is_valid:
             await update.message.reply_text(f"**❌ {error_msg}**", parse_mode='Markdown')
             return
@@ -414,9 +636,7 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if clean_quantity > remaining_stock:
                 await update.message.reply_text(
                     f"**❌ موجودی کافی نیست!**\n\n"
-                    f"**📊 موجودی کل:** {available_stock} عدد\n"
-                    f"**📦 در سایر آیتم‌های سبد:** {other_cart_qty} عدد\n"
-                    f"**✅ حداکثر برای این محصول:** {remaining_stock} عدد\n\n"
+                    f"**✅ حداکثر می‌توانید {remaining_stock} عدد انتخاب کنید.**\n\n"
                     f"لطفاً تعداد کمتری وارد کنید:",
                     parse_mode='Markdown'
                 )
@@ -448,8 +668,11 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('awaiting_quantity'):
         return
     
-    # Validate quantity input
-    is_valid, error_msg, clean_quantity = InputValidator.validate_quantity(text)
+    # Check if user is in typing mode (from quantity buttons)
+    is_typing_mode = context.user_data.get('awaiting_quantity_typing', False)
+    
+    # Validate quantity input (format only, stock check comes later)
+    is_valid, error_msg, clean_quantity = InputValidator.validate_quantity(text, min_qty=1, max_qty=999999)
     if not is_valid:
         await update.message.reply_text(f"**❌ {error_msg}**", parse_mode='Markdown')
         return
@@ -460,66 +683,65 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return
 
-    # Check stock availability INCLUDING what's already in cart
     user_id = update.effective_user.id
+    
+    # Calculate effective min/max using the helper function
+    effective_min, effective_max, remaining_stock, current_cart_qty = calculate_effective_quantity_limits(
+        product_info, user_id
+    )
+    
+    # Check minimum quantity
+    if clean_quantity < effective_min:
+        await update.message.reply_text(
+            f"**❌ حداقل {effective_min} عدد!**\n\nلطفاً تعداد بیشتری وارد کنید:",
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Check maximum quantity (if stock managed)
+    if effective_max != 999999 and clean_quantity > effective_max:
+        await update.message.reply_text(
+            f"**❌ موجودی کافی نیست!**\n\n"
+            f"**✅ حداکثر می‌توانید {effective_max} عدد انتخاب کنید.**\n\n"
+            f"لطفاً تعداد کمتری وارد کنید:",
+            parse_mode='Markdown'
+        )
+        return
 
-    # Get current quantity in cart
-    current_cart_qty = 0
-    cart_items = get_user_cart(user_id)
-
-    for item in cart_items:
-        # Convert both to string for comparison (cart stores as int or str)
-        if str(item['product_id']) == str(product_info['product_id']):
-            current_cart_qty = item['quantity']
-            break
-
-    # Calculate remaining stock after what's in cart
-    if product_info.get('manage_stock') and product_info.get('stock_quantity'):
-        available_stock = product_info['stock_quantity']
-        remaining_stock = available_stock - current_cart_qty
-
-        # Dynamic minimum: If remaining stock < original minimum, adjust minimum to 1
-        original_min = product_info['min_quantity']
-        if remaining_stock < original_min:
-            effective_min = 1  # Allow any quantity when stock is low
+    # If in typing mode from quantity buttons, update the quantity display
+    if is_typing_mode:
+        context.user_data['current_quantity'] = clean_quantity
+        context.user_data['effective_min'] = effective_min
+        context.user_data['effective_max'] = effective_max
+        
+        # Get current image index
+        current_image_index = context.user_data.get('current_image_index', 0)
+        images = context.user_data.get('product_images', [])
+        
+        # Show updated product with quantity buttons
+        message = format_product_with_quantity(
+            product_info, clean_quantity, effective_min, effective_max, remaining_stock
+        )
+        keyboard = create_quantity_keyboard(
+            product_info['product_id'], clean_quantity, effective_min, effective_max,
+            image_index=current_image_index,
+            total_images=len(images)
+        )
+        
+        # Send with image if available, otherwise text
+        if images and len(images) > 0:
+            await update.message.reply_photo(
+                photo=images[current_image_index],
+                caption=message,
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
         else:
-            effective_min = original_min
+            await update.message.reply_text(message, reply_markup=keyboard, parse_mode='Markdown')
+        context.user_data['awaiting_quantity_typing'] = False
+        return
 
-        # Check minimum quantity with dynamic minimum
-        if clean_quantity < effective_min:
-            await update.message.reply_text(
-                f"**❌ حداقل {effective_min} عدد!**",
-                parse_mode='Markdown'
-            )
-            return
-
-        # Calculate total quantity (current in cart + new request)
-        total_requested = current_cart_qty + clean_quantity
-
-        if total_requested > available_stock:
-            remaining = available_stock - current_cart_qty
-
-            await update.message.reply_text(
-                f"**❌ موجودی کافی نیست!**\n\n"
-                f"**📦 در سبد شما:** {current_cart_qty} عدد\n"
-                f"**➕ درخواست جدید:** {clean_quantity} عدد\n"
-                f"**🔢 مجموع:** {total_requested} عدد\n"
-                f"**📊 موجودی کل:** {available_stock} عدد\n\n"
-                f"**✅ حداکثر می‌توانید {remaining} عدد دیگر اضافه کنید.**",
-                parse_mode='Markdown'
-            )
-            return
-    else:
-        # No stock management - just check minimum quantity
-        min_qty = product_info['min_quantity']
-        if clean_quantity < min_qty:
-            await update.message.reply_text(
-                f"**❌ حداقل {min_qty} عدد!**",
-                parse_mode='Markdown'
-            )
-            return
-
-    # Try to add to cart
+    # Try to add to cart (original flow for direct typing)
     if add_to_cart(user_id, product_info['product_id'], clean_quantity):
         context.user_data['awaiting_quantity'] = False
         cart_items = get_user_cart(user_id)
@@ -532,9 +754,6 @@ async def handle_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
-
-# Continue with the rest of your handlers...
-# (I'll include the key ones, but you can copy the rest from your original file)
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle button callbacks"""
@@ -667,11 +886,355 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "cancel_product_add":
         # Cancel product addition - same pattern as cart cancellation
         context.user_data.clear()  # Clear all pending states including awaiting_quantity
-        await query.edit_message_text("*❌ افزودن محصول لغو شد.*", reply_markup=None, parse_mode='Markdown')
+        
+        # Check if message is a photo or text
+        try:
+            if query.message.photo:
+                # It's a photo message - edit caption
+                await query.edit_message_caption(
+                    caption="*❌ افزودن محصول لغو شد.*",
+                    reply_markup=None,
+                    parse_mode='Markdown'
+                )
+            else:
+                # It's a text message
+                await query.edit_message_text("*❌ افزودن محصول لغو شد.*", reply_markup=None, parse_mode='Markdown')
+        except Exception as e:
+            # If editing fails, delete and send new message
+            try:
+                await query.message.delete()
+            except:
+                pass
+            await query.message.reply_text("*❌ افزودن محصول لغو شد.*", parse_mode='Markdown')
+        
         await query.message.reply_text("*📱 بازگشت به کانال:*", reply_markup=create_channel_button(), parse_mode='Markdown')
         # Restore main menu
         reply_markup = create_main_menu_keyboard()
         await query.message.reply_text("*منوی اصلی:*", reply_markup=reply_markup, parse_mode='Markdown')
+    elif query.data.startswith("qty_dec_"):
+        # Decrease quantity
+        product_id = query.data.replace("qty_dec_", "")
+        product_info = context.user_data.get('current_product')
+        if not product_info or str(product_info['product_id']) != str(product_id):
+            await query.answer("❌ خطا در دریافت اطلاعات محصول", show_alert=True)
+            return
+        
+        current_quantity = context.user_data.get('current_quantity', 1)
+        effective_min = context.user_data.get('effective_min', 1)
+        effective_max = context.user_data.get('effective_max', 999999)
+        
+        # Decrease quantity
+        new_quantity = max(effective_min, current_quantity - 1)
+        context.user_data['current_quantity'] = new_quantity
+        
+        # Recalculate limits (in case stock changed)
+        user_id = update.effective_user.id
+        effective_min, effective_max, remaining_stock, _ = calculate_effective_quantity_limits(
+            product_info, user_id
+        )
+        context.user_data['effective_min'] = effective_min
+        context.user_data['effective_max'] = effective_max
+        
+        # Update message
+        message = format_product_with_quantity(
+            product_info, new_quantity, effective_min, effective_max, remaining_stock
+        )
+        keyboard = create_quantity_keyboard(product_id, new_quantity, effective_min, effective_max)
+        await query.edit_message_text(message, reply_markup=keyboard, parse_mode='Markdown')
+        await query.answer()
+    elif query.data.startswith("qty_inc_"):
+        # Increase quantity
+        product_id = query.data.replace("qty_inc_", "")
+        product_info = context.user_data.get('current_product')
+        if not product_info or str(product_info['product_id']) != str(product_id):
+            await query.answer("❌ خطا در دریافت اطلاعات محصول", show_alert=True)
+            return
+        
+        current_quantity = context.user_data.get('current_quantity', 1)
+        effective_min = context.user_data.get('effective_min', 1)
+        effective_max = context.user_data.get('effective_max', 999999)
+        
+        # Increase quantity
+        new_quantity = min(effective_max, current_quantity + 1)
+        context.user_data['current_quantity'] = new_quantity
+        
+        # Recalculate limits (in case stock changed)
+        user_id = update.effective_user.id
+        effective_min, effective_max, remaining_stock, _ = calculate_effective_quantity_limits(
+            product_info, user_id
+        )
+        context.user_data['effective_min'] = effective_min
+        context.user_data['effective_max'] = effective_max
+        
+        # Get current image index
+        current_image_index = context.user_data.get('current_image_index', 0)
+        images = context.user_data.get('product_images', [])
+        
+        # Update message
+        message = format_product_with_quantity(
+            product_info, new_quantity, effective_min, effective_max, remaining_stock
+        )
+        keyboard = create_quantity_keyboard(
+            product_id, new_quantity, effective_min, effective_max,
+            image_index=current_image_index,
+            total_images=len(images)
+        )
+        
+        # Update photo if images exist, otherwise update text
+        if images and len(images) > 0:
+            await query.edit_message_caption(
+                caption=message,
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
+        else:
+            await query.edit_message_text(message, reply_markup=keyboard, parse_mode='Markdown')
+        await query.answer()
+    elif query.data.startswith("img_prev_"):
+        # Navigate to previous image
+        # Format: img_prev_{product_id}_{index}
+        data = query.data.replace("img_prev_", "")
+        # Find last underscore (separates product_id from index)
+        last_underscore = data.rfind("_")
+        if last_underscore > 0:
+            product_id = data[:last_underscore]
+            current_index = int(data[last_underscore + 1:])
+            
+            product_info = context.user_data.get('current_product')
+            if not product_info or str(product_info['product_id']) != str(product_id):
+                await query.answer("❌ خطا در دریافت اطلاعات محصول", show_alert=True)
+                return
+            
+            images = context.user_data.get('product_images', [])
+            if not images or len(images) == 0:
+                await query.answer("⚠️ تصویری موجود نیست", show_alert=True)
+                return
+            
+            # Go to previous image
+            new_index = max(0, current_index - 1)
+            context.user_data['current_image_index'] = new_index
+            
+            # Get current quantity and limits
+            current_quantity = context.user_data.get('current_quantity', 1)
+            effective_min = context.user_data.get('effective_min', 1)
+            effective_max = context.user_data.get('effective_max', 999999)
+            user_id = update.effective_user.id
+            _, _, remaining_stock, _ = calculate_effective_quantity_limits(product_info, user_id)
+            
+            # Format message
+            message = format_product_with_quantity(
+                product_info, current_quantity, effective_min, effective_max, remaining_stock
+            )
+            
+            # Create keyboard
+            keyboard = create_quantity_keyboard(
+                product_id, current_quantity, effective_min, effective_max,
+                image_index=new_index,
+                total_images=len(images)
+            )
+            
+            # Update photo
+            await query.edit_message_media(
+                media=InputMediaPhoto(media=images[new_index], caption=message, parse_mode='Markdown'),
+                reply_markup=keyboard
+            )
+            await query.answer()
+    elif query.data.startswith("img_next_"):
+        # Navigate to next image
+        # Format: img_next_{product_id}_{index}
+        data = query.data.replace("img_next_", "")
+        # Find last underscore (separates product_id from index)
+        last_underscore = data.rfind("_")
+        if last_underscore > 0:
+            product_id = data[:last_underscore]
+            current_index = int(data[last_underscore + 1:])
+            
+            product_info = context.user_data.get('current_product')
+            if not product_info or str(product_info['product_id']) != str(product_id):
+                await query.answer("❌ خطا در دریافت اطلاعات محصول", show_alert=True)
+                return
+            
+            images = context.user_data.get('product_images', [])
+            if not images or len(images) == 0:
+                await query.answer("⚠️ تصویری موجود نیست", show_alert=True)
+                return
+            
+            # Go to next image
+            new_index = min(len(images) - 1, current_index + 1)
+            context.user_data['current_image_index'] = new_index
+            
+            # Get current quantity and limits
+            current_quantity = context.user_data.get('current_quantity', 1)
+            effective_min = context.user_data.get('effective_min', 1)
+            effective_max = context.user_data.get('effective_max', 999999)
+            user_id = update.effective_user.id
+            _, _, remaining_stock, _ = calculate_effective_quantity_limits(product_info, user_id)
+            
+            # Format message
+            message = format_product_with_quantity(
+                product_info, current_quantity, effective_min, effective_max, remaining_stock
+            )
+            
+            # Create keyboard
+            keyboard = create_quantity_keyboard(
+                product_id, current_quantity, effective_min, effective_max,
+                image_index=new_index,
+                total_images=len(images)
+            )
+            
+            # Update photo
+            await query.edit_message_media(
+                media=InputMediaPhoto(media=images[new_index], caption=message, parse_mode='Markdown'),
+                reply_markup=keyboard
+            )
+            await query.answer()
+    elif query.data == "img_info":
+        # Just show image info (no action needed)
+        await query.answer()
+    elif query.data == "qty_display":
+        # Just show current quantity (no action needed)
+        await query.answer()
+    elif query.data == "qty_min_reached":
+        await query.answer("⚠️ به حداقل تعداد رسیده‌اید", show_alert=True)
+    elif query.data == "qty_max_reached":
+        await query.answer("⚠️ به حداکثر تعداد رسیده‌اید", show_alert=True)
+    elif query.data.startswith("qty_add_cart_"):
+        # Add to cart with current quantity
+        product_id = query.data.replace("qty_add_cart_", "")
+        product_info = context.user_data.get('current_product')
+        if not product_info or str(product_info['product_id']) != str(product_id):
+            await query.answer("❌ خطا در دریافت اطلاعات محصول", show_alert=True)
+            return
+        
+        current_quantity = context.user_data.get('current_quantity', 1)
+        user_id = update.effective_user.id
+        
+        # Validate quantity one more time before adding
+        effective_min, effective_max, remaining_stock, current_cart_qty = calculate_effective_quantity_limits(
+            product_info, user_id
+        )
+        
+        # Check if quantity is valid
+        if current_quantity < effective_min:
+            await query.answer(f"❌ حداقل {effective_min} عدد باید انتخاب کنید", show_alert=True)
+            return
+        
+        if current_quantity > effective_max:
+            await query.answer(f"❌ حداکثر {effective_max} عدد می‌توانید انتخاب کنید", show_alert=True)
+            return
+        
+        # Add to cart
+        if add_to_cart(user_id, product_info['product_id'], current_quantity):
+            context.user_data['awaiting_quantity'] = False
+            cart_items = get_user_cart(user_id)
+            cart_text = format_cart(cart_items)
+            
+            keyboard = create_cart_keyboard(context)
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            # Cart should always be displayed as text message without product image
+            # If it's a photo message, edit caption first, then try to convert to text
+            # If it's a text message, just edit it
+            try:
+                if query.message.photo:
+                    # It's a photo message - first update caption, then try to convert to text
+                    # We'll use edit_message_media to convert photo to text
+                    try:
+                        # Try to convert photo message to text message using edit_message_media
+                        # This doesn't work directly, so we'll just update caption and keep photo
+                        # But user wants no image, so we'll delete and send new
+                        await query.edit_message_caption(
+                            caption=f"*✅ اضافه شد!*\n\n{cart_text}",
+                            reply_markup=reply_markup,
+                            parse_mode='Markdown'
+                        )
+                        # Now delete the photo message
+                        await query.message.delete()
+                        # Send new text message using context.bot.send_message (not reply_text to avoid triggering handlers)
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=f"*✅ اضافه شد!*\n\n{cart_text}",
+                            reply_markup=reply_markup,
+                            parse_mode='Markdown'
+                        )
+                    except Exception as e:
+                        # If editing caption fails, just delete and send new
+                        await query.message.delete()
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=f"*✅ اضافه شد!*\n\n{cart_text}",
+                            reply_markup=reply_markup,
+                            parse_mode='Markdown'
+                        )
+                else:
+                    # It's a text message - just edit it
+                    await query.edit_message_text(
+                        f"*✅ اضافه شد!*\n\n{cart_text}",
+                        reply_markup=reply_markup,
+                        parse_mode='Markdown'
+                    )
+            except Exception as e:
+                logger.error(f"Error updating cart message: {e}", exc_info=True)
+                # If editing fails, try to delete and send new message
+                try:
+                    await query.message.delete()
+                except:
+                    pass
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"*✅ اضافه شد!*\n\n{cart_text}",
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
+                )
+            
+            await query.answer("✅ به سبد خرید اضافه شد")
+        else:
+            await query.answer("❌ خطا در افزودن به سبد خرید", show_alert=True)
+    elif query.data.startswith("qty_type_"):
+        # Switch to typing mode
+        product_id = query.data.replace("qty_type_", "")
+        product_info = context.user_data.get('current_product')
+        if not product_info or str(product_info['product_id']) != str(product_id):
+            await query.answer("❌ خطا در دریافت اطلاعات محصول", show_alert=True)
+            return
+        
+        context.user_data['awaiting_quantity'] = True
+        context.user_data['awaiting_quantity_typing'] = True
+        
+        effective_min = context.user_data.get('effective_min', 1)
+        
+        message_text = (
+            f"*⌨️ تعداد را تایپ کنید:*\n\n"
+            f"*📊 حداقل:* {effective_min} عدد\n\n"
+            f"تعداد مورد نظر خود را وارد کنید:"
+        )
+        
+        # Check if message is a photo or text
+        try:
+            if query.message.photo:
+                # It's a photo message - edit caption
+                await query.edit_message_caption(
+                    caption=message_text,
+                    parse_mode='Markdown'
+                )
+            else:
+                # It's a text message
+                await query.edit_message_text(
+                    message_text,
+                    parse_mode='Markdown'
+                )
+        except Exception as e:
+            # If editing fails, delete and send new message
+            try:
+                await query.message.delete()
+            except:
+                pass
+            await query.message.reply_text(
+                message_text,
+                parse_mode='Markdown'
+            )
+        
+        await query.answer()
     elif query.data == "cancel_order":
         clear_user_cart(user_id)
         context.user_data.clear()  # Clear any pending states
